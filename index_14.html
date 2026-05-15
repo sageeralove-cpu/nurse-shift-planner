@@ -1,0 +1,843 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Nurse Shift Planner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    html,body{height:100%;}
+    body{background:#E9ECF1;font-family:Inter,sans-serif;}
+    .cell{cursor:pointer;transition:transform .12s,box-shadow .12s;border-radius:12px;}
+    .cell:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(11,24,41,.14);}
+    .overlay{position:fixed;inset:0;background:rgba(11,24,41,.5);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px;}
+    ::-webkit-scrollbar{width:4px;}
+    ::-webkit-scrollbar-thumb{background:#CBD2DC;border-radius:2px;}
+    input[type=number]::-webkit-outer-spin-button,
+    input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+
+// ─── PALETTE — steel / deep navy / bold blue ──────────────────────────────────
+const P = {
+  bg:     "#E9ECF1",
+  navy:   "#0B1829",
+  blue:   "#1A5CE8",
+  white:  "#FFFFFF",
+  muted:  "#64748B",
+  border: "#CBD2DC",
+  soft:   "#F4F5F7",
+  card:   "#FFFFFF",
+};
+
+// ─── SHIFTS ──────────────────────────────────────────────────────────────────
+const SHIFTS = {
+  day:     { label:"Day",     color:"#1A5CE8", bg:"#E4EDFD", emoji:"🌅" },
+  evening: { label:"Evening", color:"#334155", bg:"#E8EAEE", emoji:"🌆" },
+  night:   { label:"Night",   color:"#1E1B4B", bg:"#ECEAF6", emoji:"🌙" },
+  oncall:  { label:"On Call", color:"#B45309", bg:"#FEF3C7", emoji:"📟" },
+  rdo:     { label:"RDO",     color:"#065F46", bg:"#D1FAE5", emoji:"✅" },
+  leave:   { label:"Leave",   color:"#0369A1", bg:"#E0F2FE", emoji:"🏖️" },
+  off:     { label:"Off",     color:"#475569", bg:"#F1F3F6", emoji:"🏠" },
+};
+
+// ─── SHIFT TIMES ─────────────────────────────────────────────────────────────
+const SHIFT_TIMES = {
+  8.5:  ["06:00","06:30","07:00","07:30","08:00","10:30","14:00","14:30","15:00","15:30","22:00","22:30","23:00"],
+  12.5: ["06:00","06:30","07:00","07:30","08:00","10:30","14:30","18:30","19:00","19:30","20:00","22:30"],
+};
+
+function addHours(t, hrs) {
+  const [h,m] = t.split(":").map(Number);
+  const total = h*60 + m + Math.round(hrs*60);
+  return `${String(Math.floor(total/60)%24).padStart(2,"0")}:${String(total%60).padStart(2,"0")}`;
+}
+
+// ─── ACTIVITIES ───────────────────────────────────────────────────────────────
+const PRESETS = [
+  "Gym 💪","Run 🏃","Walk 🚶","Swim 🏊","Cycle 🚴","Sport ⚽",
+  "Meal Prep 🥗","Water 2L 💧","Study 📖","Meditation 🧘","Rest 😴","Family 👨‍👩‍👧",
+];
+const ACT_COLORS = ["#1A5CE8","#DC2626","#D97706","#059669","#7C3AED","#0891B2"];
+
+// ─── TAX ─────────────────────────────────────────────────────────────────────
+const TAX_BRACKETS = [
+  { from:0,      to:18200,    rate:0,    label:"Tax-free" },
+  { from:18201,  to:45000,    rate:19,   label:"19c / $1" },
+  { from:45001,  to:120000,   rate:32.5, label:"32.5c / $1" },
+  { from:120001, to:180000,   rate:37,   label:"37c / $1" },
+  { from:180001, to:Infinity, rate:45,   label:"45c / $1" },
+];
+function calcTax(gross) {
+  let tax = 0;
+  if      (gross<=18200)  tax = 0;
+  else if (gross<=45000)  tax = (gross-18200)*0.19;
+  else if (gross<=120000) tax = 5092+(gross-45000)*0.325;
+  else if (gross<=180000) tax = 29467+(gross-120000)*0.37;
+  else                    tax = 51667+(gross-180000)*0.45;
+  let lito = 0;
+  if      (gross<=37500)  lito = 700;
+  else if (gross<=45000)  lito = 700-(gross-37500)*0.05;
+  else if (gross<=66667)  lito = 325-(gross-45000)*0.015;
+  tax = Math.max(0, tax-lito);
+  const medicare = gross>26000 ? gross*0.02 : 0;
+  return { gross, incomeTax:Math.round(tax), medicare:Math.round(medicare), total:Math.round(tax+medicare), net:Math.round(gross-tax-medicare) };
+}
+
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+const MONTHS     = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const DAYS_SHORT = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+
+function daysInMonth(y,m)  { return new Date(y,m+1,0).getDate(); }
+function firstWeekday(y,m) { const d=new Date(y,m,1).getDay(); return d===0?6:d-1; }
+function fmtDate(y,m,d)    { return `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`; }
+function fmtMoney(n)        { return Math.round(n).toLocaleString("en-AU"); }
+
+// ─── ICS EXPORT ──────────────────────────────────────────────────────────────
+function downloadICS(data) {
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Nurse Shift Planner//EN",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+    "X-WR-CALNAME:Nurse Shifts",
+    "X-WR-TIMEZONE:Australia/Sydney",
+  ];
+
+  Object.entries(data).sort(([a],[b])=>a.localeCompare(b)).forEach(([dateKey, d]) => {
+    const [yr,mo,dy] = dateKey.split("-");
+    const ds = `${yr}${mo}${dy}`;
+
+    // Shift event
+    if (d.shift) {
+      const s     = SHIFTS[d.shift];
+      const start = d.shiftStart || "07:00";
+      const dur   = d.shiftDuration || 8.5;
+      const end   = addHours(start, dur);
+      const [sh,sm] = start.split(":");
+      const [eh,em] = end.split(":");
+      const desc  = [
+        d.activities?.map(a=>a.label).join(", "),
+        d.payday && d.payAmount ? `Pay received: $${parseFloat(d.payAmount).toFixed(2)}` : "",
+      ].filter(Boolean).join("\\n");
+
+      lines.push("BEGIN:VEVENT");
+      lines.push(`UID:shift-${dateKey}-${sh}${sm}@nurseplanner`);
+      lines.push(`DTSTART;TZID=Australia/Sydney:${ds}T${sh}${sm}00`);
+      lines.push(`DTEND;TZID=Australia/Sydney:${ds}T${eh}${em}00`);
+      lines.push(`SUMMARY:${s.emoji} ${s.label} Shift`);
+      if (desc) lines.push(`DESCRIPTION:${desc}`);
+      lines.push(`COLOR:${s.color}`);
+      lines.push("END:VEVENT");
+    }
+
+    // Standalone payday (no shift)
+    if (d.payday && !d.shift) {
+      lines.push("BEGIN:VEVENT");
+      lines.push(`UID:pay-${dateKey}@nurseplanner`);
+      lines.push(`DTSTART;VALUE=DATE:${ds}`);
+      lines.push(`DTEND;VALUE=DATE:${ds}`);
+      lines.push(`SUMMARY:💰 Pay Day${d.payAmount?` · $${parseFloat(d.payAmount).toFixed(2)}`:""}`);
+      lines.push("END:VEVENT");
+    }
+
+    // Activities only
+    if (!d.shift && !d.payday && (d.activities||[]).length) {
+      lines.push("BEGIN:VEVENT");
+      lines.push(`UID:acts-${dateKey}@nurseplanner`);
+      lines.push(`DTSTART;VALUE=DATE:${ds}`);
+      lines.push(`DTEND;VALUE=DATE:${ds}`);
+      lines.push(`SUMMARY:📋 ${d.activities.map(a=>a.label).join(" · ")}`);
+      lines.push("END:VEVENT");
+    }
+  });
+
+  lines.push("END:VCALENDAR");
+  const blob = new Blob([lines.join("\r\n")], { type:"text/calendar;charset=utf-8" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href = url; a.download = "nurse-shifts.ics"; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ─── TOGGLE ──────────────────────────────────────────────────────────────────
+function Toggle({ on, onToggle }) {
+  return (
+    <div onClick={onToggle} style={{ width:40,height:22,borderRadius:11,background:on?P.blue:"#94A3B8",position:"relative",cursor:"pointer",transition:"background .2s",flexShrink:0 }}>
+      <div style={{ width:18,height:18,borderRadius:"50%",background:P.white,position:"absolute",top:2,left:on?20:2,transition:"left .2s",boxShadow:"0 1px 4px rgba(0,0,0,.25)" }}/>
+    </div>
+  );
+}
+
+// ─── HOVER TOOLTIP ───────────────────────────────────────────────────────────
+function DayTooltip({ day, month, year, dayKey, data, pos, colIndex }) {
+  const d = data[dayKey]||{};
+  const shift = d.shift ? SHIFTS[d.shift] : null;
+  const acts  = d.activities||[];
+  if (!shift && !acts.length && !d.payday) return null;
+  const flipLeft = colIndex >= 5;
+  return (
+    <div style={{ position:"fixed",top:Math.min(pos.y+8,window.innerHeight-210),left:flipLeft?"auto":pos.x+4,right:flipLeft?window.innerWidth-pos.x-130:"auto",zIndex:300,background:P.white,borderRadius:14,padding:"12px 14px",boxShadow:"0 8px 32px rgba(11,24,41,.18)",border:`1.5px solid ${P.border}`,minWidth:168,maxWidth:210,pointerEvents:"none" }}>
+      <div style={{ fontSize:9,fontWeight:800,color:P.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:8 }}>
+        {DAYS_SHORT[(new Date(year,month,day).getDay()+6)%7]} {day} {MONTHS[month].slice(0,3)}
+      </div>
+      {shift && (
+        <div style={{ display:"flex",alignItems:"center",gap:7,marginBottom:7,padding:"6px 10px",borderRadius:10,background:shift.bg }}>
+          <span style={{ fontSize:16 }}>{shift.emoji}</span>
+          <div>
+            <div style={{ fontSize:11,fontWeight:800,color:shift.color }}>{shift.label}</div>
+            {d.shiftStart && d.shiftDuration && (
+              <div style={{ fontSize:9,color:P.muted,marginTop:1 }}>{d.shiftStart} → {addHours(d.shiftStart,d.shiftDuration)} · {d.shiftDuration}hr</div>
+            )}
+          </div>
+        </div>
+      )}
+      {d.payday && (
+        <div style={{ fontSize:10,fontWeight:700,color:"#065F46",marginBottom:7,display:"flex",alignItems:"center",gap:5 }}>
+          <span>💰</span>
+          <span>{d.payAmount?`$${fmtMoney(parseFloat(d.payAmount))} received`:"Pay Day"}</span>
+          {d.repeatFortnightly&&<span style={{ fontSize:8,background:"#D1FAE5",borderRadius:4,padding:"1px 4px" }}>2wk</span>}
+        </div>
+      )}
+      {acts.length > 0 && (
+        <div>
+          <div style={{ fontSize:8,fontWeight:700,color:P.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:5 }}>Activities</div>
+          {acts.map((a,i)=>(
+            <div key={i} style={{ display:"flex",alignItems:"center",gap:6,marginBottom:4 }}>
+              <div style={{ width:7,height:7,borderRadius:"50%",background:a.color,flexShrink:0 }}/>
+              <span style={{ fontSize:11,color:P.navy }}>{a.label}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── CALENDAR EXPORT MODAL ───────────────────────────────────────────────────
+function CalendarModal({ data, onClose }) {
+  const count = Object.values(data).filter(d=>d.shift||d.payday).length;
+  return (
+    <div style={{ background:P.white,borderRadius:24,padding:28,width:"100%",maxWidth:420,boxShadow:"0 24px 60px rgba(11,24,41,.22)" }}>
+      <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22 }}>
+        <div>
+          <div style={{ fontSize:9,color:P.muted,letterSpacing:"1.5px",textTransform:"uppercase",marginBottom:3 }}>Calendar Sync</div>
+          <div style={{ fontSize:22,fontWeight:800,color:P.navy }}>📅 Export Shifts</div>
+        </div>
+        <button onClick={onClose} style={S.closeBtn}>✕</button>
+      </div>
+
+      {/* Stats */}
+      <div style={{ background:"#E4EDFD",borderRadius:12,padding:"12px 16px",marginBottom:20,display:"flex",gap:16 }}>
+        <div>
+          <div style={{ fontSize:22,fontWeight:900,color:P.blue }}>{count}</div>
+          <div style={{ fontSize:10,color:P.muted }}>events to export</div>
+        </div>
+        <div style={{ borderLeft:`1px solid ${P.border}`,paddingLeft:16 }}>
+          <div style={{ fontSize:11,color:P.navy,fontWeight:600,lineHeight:1.6 }}>
+            Shifts · Pay days · Activities<br/>
+            <span style={{ color:P.muted,fontWeight:400 }}>All data in one .ics file</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Instructions */}
+      <div style={{ marginBottom:20 }}>
+        <div style={S.secLabel}>How to import</div>
+        {[
+          { icon:"1", label:"iPhone / iPad", desc:"Files app → tap .ics → opens Calendar, tap Add All" },
+          { icon:"2", label:"Mac",            desc:"Double-click .ics → Calendar opens, click OK" },
+          { icon:"3", label:"Google Calendar",desc:"Settings → Import → choose .ics file" },
+          { icon:"4", label:"Outlook",        desc:"File → Open & Export → Import/Export → .ics" },
+        ].map(step=>(
+          <div key={step.icon} style={{ display:"flex",gap:12,alignItems:"flex-start",marginBottom:12 }}>
+            <div style={{ width:24,height:24,borderRadius:"50%",background:P.blue,color:P.white,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>{step.icon}</div>
+            <div>
+              <div style={{ fontSize:12,fontWeight:700,color:P.navy,marginBottom:2 }}>{step.label}</div>
+              <div style={{ fontSize:10,color:P.muted,lineHeight:1.5 }}>{step.desc}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display:"flex",gap:10 }}>
+        <button onClick={()=>{ downloadICS(data); onClose(); }} style={{ ...S.btnPrimary,flex:1,padding:14,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:8 }}>
+          <span>⬇️</span> Download .ics File
+        </button>
+        <button onClick={onClose} style={{ ...S.btnGhost,padding:"14px 16px" }}>Cancel</button>
+      </div>
+
+      <div style={{ fontSize:9,color:P.muted,marginTop:12,textAlign:"center",lineHeight:1.6 }}>
+        Re-export anytime to update — existing events will be updated if using the same calendar
+      </div>
+    </div>
+  );
+}
+
+// ─── TAX MODAL ───────────────────────────────────────────────────────────────
+function TaxModal({ dayData, onClose }) {
+  const [gross, setGross] = useState("");
+  const amount = parseFloat(gross)||0;
+  const result = amount>0 ? calcTax(amount) : null;
+  const payEntries = Object.entries(dayData).filter(([,d])=>d.payday&&d.payAmount).sort(([a],[b])=>a.localeCompare(b));
+  const totalNet   = payEntries.reduce((s,[,d])=>s+(parseFloat(d.payAmount)||0),0);
+  const curBracket = result ? TAX_BRACKETS.find(b=>amount>=b.from&&amount<=b.to) : null;
+
+  return (
+    <div style={{ background:P.white,borderRadius:24,padding:26,width:"100%",maxWidth:460,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 24px 60px rgba(11,24,41,.22)" }}>
+      <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20 }}>
+        <div>
+          <div style={{ fontSize:9,color:P.muted,letterSpacing:"1.5px",textTransform:"uppercase",marginBottom:3 }}>ATO 2024–25</div>
+          <div style={{ fontSize:22,fontWeight:800,color:P.navy }}>💰 Tax Summary</div>
+        </div>
+        <button onClick={onClose} style={S.closeBtn}>✕</button>
+      </div>
+
+      {payEntries.length > 0 && (
+        <div style={{ background:"#D1FAE5",borderRadius:14,padding:14,marginBottom:16 }}>
+          <div style={S.secLabel}>Recorded Pay Dates</div>
+          {payEntries.map(([date,d])=>(
+            <div key={date} style={{ display:"flex",justifyContent:"space-between",fontSize:12,color:P.navy,marginBottom:4 }}>
+              <span style={{ color:P.muted }}>{date}{d.repeatFortnightly?" 🔁":""}{d.manualOverride?" ⚡":""}</span>
+              <span style={{ fontWeight:700 }}>${parseFloat(d.payAmount).toLocaleString("en-AU",{minimumFractionDigits:2})}</span>
+            </div>
+          ))}
+          <div style={{ borderTop:"1px solid #6EE7B7",paddingTop:8,marginTop:8,display:"flex",justifyContent:"space-between",fontWeight:800,fontSize:13,color:P.navy }}>
+            <span>Total received (after-tax)</span>
+            <span style={{ color:"#065F46" }}>${totalNet.toLocaleString("en-AU",{minimumFractionDigits:2})}</span>
+          </div>
+        </div>
+      )}
+
+      <div style={{ marginBottom:18 }}>
+        <div style={S.secLabel}>Annual Gross Income (before tax)</div>
+        <div style={{ display:"flex",gap:8,alignItems:"center" }}>
+          <span style={{ fontSize:22,color:P.muted,fontWeight:300 }}>$</span>
+          <input type="number" value={gross} onChange={e=>setGross(e.target.value)} placeholder="e.g. 95000"
+            style={{ ...S.input,fontSize:20,fontWeight:700,flex:1 }}/>
+        </div>
+      </div>
+
+      {result && (
+        <>
+          <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14 }}>
+            {[
+              {label:"Gross Income",    val:result.gross,     color:P.navy},
+              {label:"Income Tax",      val:result.incomeTax, color:"#DC2626"},
+              {label:"Medicare (2%)",   val:result.medicare,  color:"#D97706"},
+              {label:"Net Income ✓",   val:result.net,       color:P.blue},
+            ].map(item=>(
+              <div key={item.label} style={{ background:P.soft,borderRadius:14,padding:14,border:`1.5px solid ${item.color}22` }}>
+                <div style={{ fontSize:9,color:P.muted,fontWeight:700,letterSpacing:"1px",textTransform:"uppercase",marginBottom:4 }}>{item.label}</div>
+                <div style={{ fontSize:19,fontWeight:800,color:item.color }}>${fmtMoney(item.val)}</div>
+                <div style={{ fontSize:10,color:P.muted,marginTop:2 }}>${fmtMoney(Math.round(item.val/26))}/fortnight</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ background:P.soft,borderRadius:14,padding:14,marginBottom:14 }}>
+            <div style={{ display:"flex",justifyContent:"space-between",marginBottom:8 }}>
+              <span style={{ fontSize:11,color:P.muted }}>Effective Tax Rate</span>
+              <span style={{ fontSize:16,fontWeight:800,color:P.navy }}>{((result.total/result.gross)*100).toFixed(1)}%</span>
+            </div>
+            <div style={{ background:P.border,borderRadius:6,height:10,overflow:"hidden" }}>
+              <div style={{ width:`${(result.total/result.gross)*100}%`,height:"100%",background:`linear-gradient(90deg,${P.blue},${P.navy})`,borderRadius:6,transition:"width .5s" }}/>
+            </div>
+            {curBracket && <div style={{ fontSize:10,color:P.muted,marginTop:8 }}>Marginal: <strong style={{ color:P.navy }}>{curBracket.rate}%</strong> · LITO applied</div>}
+          </div>
+
+          <div style={S.secLabel}>2024–25 Tax Brackets</div>
+          {TAX_BRACKETS.map((b,i)=>(
+            <div key={i} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 10px",borderRadius:8,marginBottom:4,background:curBracket===b?"#E4EDFD":"transparent",border:curBracket===b?`1.5px solid ${P.blue}44`:"1.5px solid transparent" }}>
+              <span style={{ fontSize:11,color:P.navy }}>${b.from.toLocaleString()} {b.to===Infinity?"+":`— $${b.to.toLocaleString()}`}</span>
+              <div style={{ display:"flex",gap:8,alignItems:"center" }}>
+                <span style={{ fontSize:10,color:P.muted }}>{b.label}</span>
+                <span style={{ fontSize:12,fontWeight:800,color:curBracket===b?P.blue:P.muted }}>{b.rate}%</span>
+              </div>
+            </div>
+          ))}
+          <div style={{ fontSize:10,color:"#94A3B8",marginTop:12,lineHeight:1.6 }}>⚠️ Estimate only. Includes LITO. Does not include HECS/HELP. Consult a registered tax agent.</div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── DAY MODAL ───────────────────────────────────────────────────────────────
+function DayModal({ day, month, year, existing, onSave, onClose }) {
+  const [shift, setShift]             = useState(existing?.shift || "");
+  const [shiftDuration, setDuration]  = useState(existing?.shiftDuration || null);
+  const [shiftStart, setStart]        = useState(existing?.shiftStart || "");
+  const [acts, setActs]               = useState(existing?.activities || []);
+  const [payday, setPayday]           = useState(existing?.payday || false);
+  const [payAmt, setPayAmt]           = useState(existing?.payAmount || "");
+  const [regularAmt, setRegularAmt]   = useState(existing?.regularAmount || "");
+  const [fortnightly, setFortnightly] = useState(existing?.repeatFortnightly || false);
+  const [custom, setCustom]           = useState("");
+  const isRepeat     = existing?.isFortnightlyRepeat || false;
+  const isOverridden = isRepeat && payAmt && regularAmt && payAmt !== regularAmt;
+
+  const dayLabel  = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(year,month,day).getDay()];
+  const endTime   = (shiftStart && shiftDuration) ? addHours(shiftStart, shiftDuration) : null;
+  const timeOpts  = shiftDuration ? SHIFT_TIMES[shiftDuration] : [];
+
+  function addActivity(label) {
+    if (!label.trim()||acts.length>=5) return;
+    setActs(a=>[...a,{label:label.trim(),color:ACT_COLORS[a.length%ACT_COLORS.length]}]);
+    setCustom("");
+  }
+
+  return (
+    <div style={{ background:P.white,borderRadius:24,padding:26,width:"100%",maxWidth:460,maxHeight:"93vh",overflowY:"auto",boxShadow:"0 24px 60px rgba(11,24,41,.22)" }}>
+      {/* Header */}
+      <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20 }}>
+        <div>
+          <div style={{ fontSize:9,color:P.muted,letterSpacing:"1.5px",textTransform:"uppercase",marginBottom:3 }}>{MONTHS[month]} {year}</div>
+          <div style={{ fontSize:26,fontWeight:900,color:P.navy,letterSpacing:"-0.5px" }}>{day} <span style={{ color:P.blue }}>{dayLabel}</span></div>
+        </div>
+        <button onClick={onClose} style={S.closeBtn}>✕</button>
+      </div>
+
+      {/* ── SHIFT TYPE ── */}
+      <div style={{ marginBottom:18 }}>
+        <div style={S.secLabel}>Shift Type</div>
+        <div style={{ display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6 }}>
+          {Object.entries(SHIFTS).map(([key,s])=>{
+            const sel=shift===key;
+            return (
+              <button key={key} onClick={()=>{ setShift(sel?"":key); setDuration(null); setStart(""); }}
+                style={{ padding:"10px 4px",borderRadius:12,border:`2px solid ${sel?s.color:"transparent"}`,background:sel?s.bg:P.soft,cursor:"pointer",boxShadow:sel?`0 2px 10px ${s.color}33`:"none",transition:"all .15s",textAlign:"center",fontFamily:"inherit" }}>
+                <div style={{ fontSize:18 }}>{s.emoji}</div>
+                <div style={{ fontSize:9,fontWeight:700,color:sel?s.color:P.muted,marginTop:2 }}>{s.label}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── SHIFT DURATION & START TIME ── */}
+      {shift && !["oncall","rdo","leave","off"].includes(shift) && (
+        <div style={{ background:P.soft,borderRadius:14,padding:14,marginBottom:18 }}>
+          <div style={S.secLabel}>Duration & Start Time</div>
+          <div style={{ display:"flex",gap:8,marginBottom:12 }}>
+            {[8.5,12.5].map(d=>(
+              <button key={d} onClick={()=>{ setDuration(prev=>prev===d?null:d); setStart(""); }}
+                style={{ flex:1,padding:"10px 0",borderRadius:10,border:`2px solid ${shiftDuration===d?SHIFTS[shift].color:P.border}`,background:shiftDuration===d?SHIFTS[shift].bg:P.white,cursor:"pointer",fontFamily:"inherit",transition:"all .15s" }}>
+                <div style={{ fontSize:16,fontWeight:800,color:shiftDuration===d?SHIFTS[shift].color:P.navy }}>{d}hr</div>
+                <div style={{ fontSize:9,color:P.muted,marginTop:2 }}>{d===8.5?"Standard":"Extended"}</div>
+              </button>
+            ))}
+          </div>
+          {shiftDuration && (
+            <div>
+              <div style={{ fontSize:9,color:P.muted,fontWeight:700,letterSpacing:"1px",textTransform:"uppercase",marginBottom:8 }}>Start → End</div>
+              <div style={{ display:"flex",flexWrap:"wrap",gap:6 }}>
+                {timeOpts.map(t=>{
+                  const sel=shiftStart===t;
+                  return (
+                    <button key={t} onClick={()=>setStart(sel?"":t)} style={{ padding:"7px 10px",borderRadius:10,border:`1.5px solid ${sel?SHIFTS[shift].color:P.border}`,background:sel?SHIFTS[shift].bg:P.white,cursor:"pointer",fontFamily:"inherit",transition:"all .12s",textAlign:"center" }}>
+                      <div style={{ fontSize:11,fontWeight:700,color:sel?SHIFTS[shift].color:P.navy }}>{t}</div>
+                      <div style={{ fontSize:9,color:P.muted }}>→ {addHours(t,shiftDuration)}</div>
+                    </button>
+                  );
+                })}
+              </div>
+              {shiftStart && endTime && (
+                <div style={{ marginTop:12,padding:"10px 14px",background:SHIFTS[shift].bg,borderRadius:10,display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+                  <div>
+                    <div style={{ fontSize:9,color:P.muted,fontWeight:700,letterSpacing:"1px",textTransform:"uppercase",marginBottom:2 }}>Selected</div>
+                    <div style={{ fontSize:16,fontWeight:800,color:SHIFTS[shift].color }}>{shiftStart} → {endTime}</div>
+                  </div>
+                  <div style={{ textAlign:"right",fontSize:10,color:P.muted }}>{shiftDuration}hr {SHIFTS[shift].emoji} {SHIFTS[shift].label}</div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── PAYDAY ── */}
+      <div style={{ background:P.soft,borderRadius:14,padding:14,marginBottom:18 }}>
+        <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:payday?14:0 }}>
+          <div>
+            <div style={{ fontSize:13,fontWeight:700,color:P.navy }}>
+              💰 Pay Day {isRepeat&&<span style={{ fontSize:9,background:"#D1FAE5",color:"#065F46",borderRadius:6,padding:"2px 7px",marginLeft:4,fontWeight:700 }}>🔁 Series</span>}
+            </div>
+            {!payday&&<div style={{ fontSize:10,color:P.muted }}>Mark as a pay date</div>}
+          </div>
+          <Toggle on={payday} onToggle={()=>setPayday(p=>!p)}/>
+        </div>
+
+        {payday && (
+          <>
+            {/* Series regular amount reference */}
+            {isRepeat && regularAmt && (
+              <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",background:"#F1F3F6",borderRadius:10,marginBottom:12 }}>
+                <div>
+                  <div style={{ fontSize:9,color:P.muted,fontWeight:700,letterSpacing:"1px",textTransform:"uppercase",marginBottom:2 }}>Regular Amount</div>
+                  <div style={{ fontSize:15,fontWeight:800,color:P.navy }}>${parseFloat(regularAmt).toLocaleString("en-AU",{minimumFractionDigits:2})}</div>
+                </div>
+                {isOverridden
+                  ? <button onClick={()=>setPayAmt(regularAmt)} style={{ fontSize:10,fontWeight:700,color:P.blue,background:"#E4EDFD",border:`1px solid ${P.blue}44`,borderRadius:8,padding:"5px 10px",cursor:"pointer",fontFamily:"inherit" }}>↩ Reset</button>
+                  : <div style={{ fontSize:10,color:"#065F46",fontWeight:600 }}>✓ Using regular</div>
+                }
+              </div>
+            )}
+
+            {/* This period amount */}
+            <div style={{ marginBottom:14 }}>
+              <div style={{ display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:6 }}>
+                <div style={{ fontSize:10,color:P.muted }}>{isRepeat?"This period (after-tax, AUD)":"After-tax amount received (AUD)"}</div>
+                {isOverridden&&<div style={{ fontSize:9,color:"#D97706",fontWeight:700 }}>⚡ Override</div>}
+              </div>
+              <div style={{ display:"flex",gap:8,alignItems:"center" }}>
+                <span style={{ fontSize:22,color:P.muted,fontWeight:300 }}>$</span>
+                <input type="number" value={payAmt} onChange={e=>setPayAmt(e.target.value)} placeholder="0.00"
+                  style={{ ...S.input,fontSize:22,fontWeight:700,flex:1,borderColor:isOverridden?"#D97706":P.border }}/>
+              </div>
+              {isOverridden&&<div style={{ fontSize:9,color:"#D97706",marginTop:5 }}>Differs from regular — tax calc uses this amount</div>}
+            </div>
+
+            {/* Fortnightly setup (new entries only) */}
+            {!isRepeat && (
+              <div style={{ borderTop:`1px dashed ${P.border}`,paddingTop:12 }}>
+                <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:fortnightly?10:0 }}>
+                  <div>
+                    <div style={{ fontSize:12,fontWeight:700,color:P.navy }}>🔁 Repeat Fortnightly</div>
+                    <div style={{ fontSize:10,color:P.muted,marginTop:2 }}>Auto-add every 14 days for 12 months</div>
+                  </div>
+                  <Toggle on={fortnightly} onToggle={()=>setFortnightly(p=>!p)}/>
+                </div>
+                {fortnightly && (
+                  <>
+                    <div style={{ marginBottom:10,padding:"8px 12px",background:"#D1FAE5",borderRadius:10,fontSize:10,color:"#065F46",fontWeight:600 }}>
+                      ✓ Future pay dates auto-populate — each editable individually
+                    </div>
+                    <div>
+                      <div style={{ fontSize:10,color:P.muted,marginBottom:6 }}>Regular amount (default for all future dates)</div>
+                      <div style={{ display:"flex",gap:8,alignItems:"center" }}>
+                        <span style={{ fontSize:16,color:P.muted }}>$</span>
+                        <input type="number" value={regularAmt} onChange={e=>{ setRegularAmt(e.target.value); if(!payAmt) setPayAmt(e.target.value); }}
+                          placeholder="Leave blank to use above" style={{ ...S.input,fontSize:14,fontWeight:600,flex:1 }}/>
+                      </div>
+                      <div style={{ fontSize:9,color:P.muted,marginTop:4 }}>Each date can be adjusted later without affecting others</div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* ── ACTIVITIES ── */}
+      <div style={{ marginBottom:20 }}>
+        <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10 }}>
+          <div style={S.secLabel}>Activities & Habits</div>
+          <div style={{ fontSize:10,fontWeight:700,color:acts.length>=5?"#DC2626":P.muted }}>{acts.length}/5</div>
+        </div>
+        <div style={{ display:"flex",flexWrap:"wrap",gap:6,marginBottom:10 }}>
+          {acts.map((a,i)=>(
+            <div key={i} style={{ display:"flex",alignItems:"center",gap:5,padding:"5px 12px",borderRadius:20,background:a.color+"22",border:`1.5px solid ${a.color}55`,fontSize:11,fontWeight:600,color:P.navy }}>
+              <div style={{ width:7,height:7,borderRadius:"50%",background:a.color }}/>
+              {a.label}
+              <span onClick={()=>setActs(x=>x.filter((_,j)=>j!==i))} style={{ cursor:"pointer",color:P.muted,marginLeft:2,fontSize:14,lineHeight:1 }}>×</span>
+            </div>
+          ))}
+          {acts.length===0&&<div style={{ fontSize:11,color:P.muted }}>Add up to 5 activities below</div>}
+        </div>
+        {acts.length < 5 && (
+          <>
+            <div style={{ marginBottom:8 }}>
+              <div style={{ fontSize:9,color:P.muted,fontWeight:700,letterSpacing:"1px",textTransform:"uppercase",marginBottom:6 }}>Quick Add</div>
+              <div style={{ display:"flex",flexWrap:"wrap",gap:5 }}>
+                {PRESETS.filter(p=>!acts.find(a=>a.label===p)).slice(0,8).map(p=>(
+                  <button key={p} onClick={()=>addActivity(p)} style={{ background:P.soft,border:`1px solid ${P.border}`,borderRadius:20,padding:"5px 10px",fontSize:11,cursor:"pointer",color:P.navy,fontFamily:"inherit" }}>{p}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{ display:"flex",gap:8 }}>
+              <input type="text" value={custom} onChange={e=>setCustom(e.target.value)} placeholder="Custom activity…"
+                style={{ ...S.input,flex:1 }} onKeyDown={e=>e.key==="Enter"&&addActivity(custom)}/>
+              <button onClick={()=>addActivity(custom)} style={S.btnPrimary}>Add</button>
+            </div>
+          </>
+        )}
+      </div>
+
+      <button onClick={()=>onSave({ shift,shiftDuration,shiftStart,activities:acts,payday,payAmount:payAmt,regularAmount:regularAmt||payAmt,repeatFortnightly:fortnightly,manualOverride:isRepeat&&isOverridden })}
+        style={{ ...S.btnPrimary,width:"100%",padding:14,fontSize:14,letterSpacing:"0.3px" }}>
+        Save Day ✓
+      </button>
+    </div>
+  );
+}
+
+// ─── MAIN APP ────────────────────────────────────────────────────────────────
+function NurseShiftPlanner() {
+  const today = new Date();
+  const [year, setYear]     = useState(today.getFullYear());
+  const [month, setMonth]   = useState(today.getMonth());
+  const [data, setData]     = useState(()=>{
+    try { const s=localStorage.getItem('nurseShiftData_v1'); return s ? JSON.parse(s) : {}; }
+    catch { return {}; }
+  });
+  const [selDay, setSelDay]     = useState(null);
+  const [showTax, setShowTax]   = useState(false);
+  const [showCal, setShowCal]   = useState(false);
+  const [hovered, setHovered]   = useState(null);
+  const [saveMsg, setSaveMsg]   = useState("");
+  const hoverTimer   = useRef(null);
+  const fileInputRef = useRef(null);
+
+  function saveJSON() {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type:"application/json" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = `nurse-shifts-${new Date().toISOString().slice(0,10)}.json`; a.click();
+    URL.revokeObjectURL(url);
+    setSaveMsg("✓ Saved!"); setTimeout(()=>setSaveMsg(""), 2500);
+  }
+
+  function loadJSON(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        setData(JSON.parse(ev.target.result));
+        setSaveMsg("✓ Loaded!"); setTimeout(()=>setSaveMsg(""), 2500);
+      } catch { setSaveMsg("❌ Invalid file"); setTimeout(()=>setSaveMsg(""), 2500); }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  }
+
+  
+  // ── AUTO-SAVE: persist every change to localStorage ──
+  useEffect(()=>{
+    try { localStorage.setItem('nurseShiftData_v1', JSON.stringify(data)); }
+    catch(e){ console.warn('Storage full', e); }
+  }, [data]);
+
+  function prevMonth() { if(month===0){setMonth(11);setYear(y=>y-1);}else setMonth(m=>m-1); }
+  function nextMonth() { if(month===11){setMonth(0);setYear(y=>y+1);}else setMonth(m=>m+1); }
+
+  function saveDay(day, payload) {
+    const key = fmtDate(year, month, day);
+    const updates = { [key]: payload };
+    if (payload.payday && payload.repeatFortnightly) {
+      const base = new Date(year, month, day);
+      for (let i=1; i<=26; i++) {
+        const fut = new Date(base.getTime() + i*14*24*60*60*1000);
+        const fk  = fmtDate(fut.getFullYear(), fut.getMonth(), fut.getDate());
+        const prev = data[fk]||{};
+        updates[fk] = {
+          ...prev,
+          payday: true,
+          payAmount: prev.manualOverride ? prev.payAmount : (payload.regularAmount||payload.payAmount||""),
+          regularAmount: payload.regularAmount||payload.payAmount||"",
+          repeatFortnightly: true,
+          isFortnightlyRepeat: true,
+          manualOverride: prev.manualOverride||false,
+        };
+      }
+    }
+    setData(prev=>({...prev,...updates}));
+    setSelDay(null);
+  }
+
+  const onCellEnter = useCallback((day, key, e, colIndex) => {
+    clearTimeout(hoverTimer.current);
+    const rect = e.currentTarget.getBoundingClientRect();
+    setHovered({ day, key, pos:{ x:rect.left, y:rect.bottom }, colIndex });
+  }, []);
+  const onCellLeave = useCallback(() => {
+    hoverTimer.current = setTimeout(()=>setHovered(null), 80);
+  }, []);
+
+  const stats = useMemo(()=>{
+    const keys = Object.keys(data).filter(k=>{ const [y,m]=k.split("-").map(Number); return y===year&&m-1===month; });
+    let shifts={},payTotal=0,payDays=0;
+    keys.forEach(k=>{ const d=data[k]; if(d.shift) shifts[d.shift]=(shifts[d.shift]||0)+1; if(d.payday&&d.payAmount){payTotal+=parseFloat(d.payAmount)||0;payDays++;} });
+    return {shifts,payTotal,payDays};
+  },[data,year,month]);
+
+  const totalDays = daysInMonth(year,month);
+  const startPad  = firstWeekday(year,month);
+  const cells     = [...Array(startPad).fill(null),...Array.from({length:totalDays},(_,i)=>i+1)];
+  const isToday   = d => d===today.getDate()&&month===today.getMonth()&&year===today.getFullYear();
+
+  return (
+    <div style={{ fontFamily:"'Inter','DM Sans',sans-serif",background:P.bg,minHeight:"100vh",padding:"18px 14px",color:P.navy }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+        *{box-sizing:border-box;margin:0;padding:0;}
+        .cell{cursor:pointer;transition:transform .12s,box-shadow .12s;border-radius:12px;}
+        .cell:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(11,24,41,.14);}
+        .overlay{position:fixed;inset:0;background:rgba(11,24,41,.5);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px;}
+        ::-webkit-scrollbar{width:4px;}
+        ::-webkit-scrollbar-thumb{background:#CBD2DC;border-radius:2px;}
+        input[type=number]::-webkit-outer-spin-button,input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;}
+      `}</style>
+
+      {/* ── HEADER ── */}
+      <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,flexWrap:"wrap",gap:10 }}>
+        <div>
+          <div style={{ fontSize:9,color:P.muted,letterSpacing:"2px",textTransform:"uppercase",marginBottom:4 }}>🏥 Nursing Shift Planner</div>
+          <div style={{ fontSize:28,fontWeight:900,letterSpacing:"-1.5px",lineHeight:1 }}>
+            {MONTHS[month]} <span style={{ color:P.blue }}>{year}</span>
+          </div>
+        </div>
+        <div style={{ display:"flex",gap:7,flexWrap:"wrap",alignItems:"center" }}>
+          <input ref={fileInputRef} type="file" accept=".json" onChange={loadJSON} style={{ display:"none" }}/>
+          <button onClick={saveJSON} style={{ ...S.btnGhost,fontSize:12,display:"flex",alignItems:"center",gap:5 }}>💾 Save</button>
+          <button onClick={()=>fileInputRef.current?.click()} style={{ ...S.btnGhost,fontSize:12,display:"flex",alignItems:"center",gap:5 }}>📂 Load</button>
+          {saveMsg && <span style={{ fontSize:11,fontWeight:700,color:saveMsg.startsWith("✓")?"#065F46":"#DC2626",background:saveMsg.startsWith("✓")?"#D1FAE5":"#FEE2E2",padding:"4px 10px",borderRadius:8 }}>{saveMsg}</span>}
+          <button onClick={()=>setShowCal(true)} style={{ ...S.btnGhost,display:"flex",alignItems:"center",gap:5,fontSize:12 }}>📅 Calendar</button>
+          <button onClick={()=>setShowTax(true)} style={{ ...S.btnGhost,fontSize:12 }}>💰 Tax</button>
+          <button onClick={()=>{setYear(today.getFullYear());setMonth(today.getMonth());}} style={{ ...S.btnGhost,fontSize:12 }}>Today</button>
+          <button onClick={prevMonth} style={{ ...S.btnGhost,padding:"7px 14px",fontSize:18,fontWeight:300 }}>‹</button>
+          <button onClick={nextMonth} style={{ ...S.btnGhost,padding:"7px 14px",fontSize:18,fontWeight:300 }}>›</button>
+        </div>
+      </div>
+
+      {/* ── STATS ── */}
+      <div style={{ display:"flex",gap:8,marginBottom:12,flexWrap:"wrap" }}>
+        {Object.entries(stats.shifts).map(([key,count])=>{
+          const s=SHIFTS[key];
+          return <div key={key} style={{ display:"flex",alignItems:"center",gap:5,background:s.bg,borderRadius:20,padding:"5px 12px",fontSize:11,fontWeight:700,color:s.color,border:`1.5px solid ${s.color}33` }}>{s.emoji} {s.label} ×{count}</div>;
+        })}
+        {stats.payDays>0&&<div style={{ display:"flex",alignItems:"center",gap:5,background:"#D1FAE5",borderRadius:20,padding:"5px 12px",fontSize:11,fontWeight:700,color:"#065F46",border:"1.5px solid #6EE7B755" }}>💰 ${fmtMoney(stats.payTotal)} this month</div>}
+      </div>
+
+      {/* ── LEGEND ── */}
+      <div style={{ display:"flex",gap:10,flexWrap:"wrap",marginBottom:12 }}>
+        {Object.entries(SHIFTS).map(([key,s])=>(
+          <div key={key} style={{ display:"flex",alignItems:"center",gap:4,fontSize:10,color:P.muted }}>
+            <div style={{ width:10,height:10,borderRadius:3,background:s.color }}/>
+            {s.label}
+          </div>
+        ))}
+        <div style={{ display:"flex",alignItems:"center",gap:4,fontSize:10,color:P.muted }}>
+          <div style={{ width:6,height:6,borderRadius:"50%",background:P.blue }}/>
+          Habit · hover to preview
+        </div>
+      </div>
+
+      {/* ── CALENDAR ── */}
+      <div style={{ background:P.white,borderRadius:20,padding:"16px 12px 12px",boxShadow:"0 2px 20px rgba(11,24,41,.07)" }}>
+        <div style={{ display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3,marginBottom:6 }}>
+          {DAYS_SHORT.map(d=>(
+            <div key={d} style={{ textAlign:"center",fontSize:9,fontWeight:800,color:(d==="Sat"||d==="Sun")?P.blue:P.muted,letterSpacing:"1px",textTransform:"uppercase",padding:"3px 0" }}>{d}</div>
+          ))}
+        </div>
+
+        <div style={{ display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3 }}>
+          {cells.map((day,idx)=>{
+            if(!day) return <div key={`p-${idx}`}/>;
+            const colIndex = idx%7;
+            const key   = fmtDate(year,month,day);
+            const d     = data[key]||{};
+            const shift = d.shift?SHIFTS[d.shift]:null;
+            const acts  = d.activities||[];
+            const isT   = isToday(day);
+            const dow   = new Date(year,month,day).getDay();
+
+            return (
+              <div key={key} className="cell" onClick={()=>setSelDay(day)}
+                onMouseEnter={e=>onCellEnter(day,key,e,colIndex)}
+                onMouseLeave={onCellLeave}
+                style={{ background:shift?shift.bg:isT?"#E4EDFD":P.soft,border:isT?`2px solid ${P.blue}`:`1.5px solid ${P.border}`,padding:"7px 5px",minHeight:92 }}>
+
+                <div style={{ fontSize:12,fontWeight:isT?900:600,color:isT?P.blue:(dow===0||dow===6)?"#334155":P.navy,marginBottom:3 }}>{day}</div>
+
+                {shift&&(
+                  <div style={{ fontSize:7.5,fontWeight:800,padding:"2px 5px",borderRadius:20,display:"inline-flex",alignItems:"center",gap:2,marginBottom:3,background:shift.color,color:P.white,whiteSpace:"nowrap" }}>
+                    {shift.emoji} {shift.label}{d.shiftStart&&<span style={{ opacity:.8 }}> {d.shiftStart}</span>}
+                  </div>
+                )}
+
+                {d.payday&&(
+                  <div style={{ fontSize:7.5,color:"#065F46",fontWeight:800,marginBottom:3 }}>
+                    💰{d.payAmount?` $${fmtMoney(parseFloat(d.payAmount))}`:" Pay"}{d.repeatFortnightly&&<span style={{ opacity:.6 }}> 🔁</span>}
+                  </div>
+                )}
+
+                <div style={{ display:"flex",gap:2,flexWrap:"wrap",marginBottom:2 }}>
+                  {acts.slice(0,5).map((a,i)=><div key={i} title={a.label} style={{ width:6,height:6,borderRadius:"50%",background:a.color,flexShrink:0 }}/>)}
+                </div>
+                {acts.slice(0,2).map((a,i)=><div key={i} style={{ fontSize:7,color:P.muted,lineHeight:1.3,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis" }}>{a.label}</div>)}
+                {acts.length>2&&<div style={{ fontSize:7,color:P.blue,fontWeight:700 }}>+{acts.length-2}</div>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div style={{ display:'flex',alignItems:'center',gap:6,marginTop:10,padding:'5px 12px',background:'#D1FAE5',borderRadius:10,width:'fit-content' }}>
+        <div style={{ width:7,height:7,borderRadius:'50%',background:'#059669' }}/>
+        <span style={{ fontSize:10,color:'#065F46',fontWeight:600 }}>Auto-saving to this browser · use 💾 Backup to export</span>
+      </div>
+      <div style={{ textAlign:"center",marginTop:12,fontSize:10,color:P.muted }}>
+        Tap to edit · Hover to preview · 📅 Sync Calendar exports .ics · 🏥 Built for nurses
+      </div>
+
+      {/* ── HOVER TOOLTIP ── */}
+      {hovered && (() => {
+        const d=data[hovered.key]||{};
+        return (d.shift||d.payday||(d.activities||[]).length)
+          ? <DayTooltip day={hovered.day} month={month} year={year} dayKey={hovered.key} data={data} pos={hovered.pos} colIndex={hovered.colIndex}/>
+          : null;
+      })()}
+
+      {/* ── DAY MODAL ── */}
+      {selDay!==null&&(
+        <div className="overlay" onClick={e=>e.target===e.currentTarget&&setSelDay(null)}>
+          <DayModal day={selDay} month={month} year={year} existing={data[fmtDate(year,month,selDay)]} onSave={p=>saveDay(selDay,p)} onClose={()=>setSelDay(null)}/>
+        </div>
+      )}
+
+      {/* ── TAX MODAL ── */}
+      {showTax&&(
+        <div className="overlay" onClick={e=>e.target===e.currentTarget&&setShowTax(false)}>
+          <TaxModal dayData={data} onClose={()=>setShowTax(false)}/>
+        </div>
+      )}
+
+      {/* ── CALENDAR EXPORT MODAL ── */}
+      {showCal&&(
+        <div className="overlay" onClick={e=>e.target===e.currentTarget&&setShowCal(false)}>
+          <CalendarModal data={data} onClose={()=>setShowCal(false)}/>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── SHARED STYLES ───────────────────────────────────────────────────────────
+const S = {
+  secLabel:   { fontSize:9,fontWeight:800,color:P.muted,letterSpacing:"1.5px",textTransform:"uppercase",marginBottom:10 },
+  input:      { border:`1.5px solid ${P.border}`,borderRadius:10,padding:"9px 12px",outline:"none",fontFamily:"'Inter',sans-serif",color:P.navy,background:P.soft,fontSize:13,width:"100%" },
+  btnPrimary: { background:`linear-gradient(135deg,${P.blue},${P.navy})`,color:P.white,border:"none",borderRadius:12,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"'Inter',sans-serif" },
+  btnGhost:   { background:"transparent",color:P.navy,border:`1.5px solid ${P.border}`,borderRadius:10,padding:"7px 13px",fontSize:12,cursor:"pointer",fontFamily:"'Inter',sans-serif" },
+  closeBtn:   { background:P.soft,border:"none",borderRadius:"50%",width:34,height:34,cursor:"pointer",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",color:P.muted,flexShrink:0 },
+};
+
+
+ReactDOM.createRoot(document.getElementById('root')).render(<NurseShiftPlanner/>);
+
+</script>
+</body>
+</html>
