@@ -123,20 +123,22 @@ function downloadICS(data) {
     if (d.shift) {
       const s     = SHIFTS[d.shift];
       const start = d.shiftStart || "07:00";
-      const dur   = d.shiftDuration || 8.5;
+      const dur   = (d.shiftDuration || 8.5) + (d.overtime || 0);
       const end   = addHours(start, dur);
       const [sh,sm] = start.split(":");
       const [eh,em] = end.split(":");
       const desc  = [
         d.activities?.map(a=>a.label).join(", "),
+        d.overtime > 0 ? `Overtime: +${d.overtime}hr (total ${dur}hr)` : "",
         d.payday && d.payAmount ? `Pay received: $${parseFloat(d.payAmount).toFixed(2)}` : "",
       ].filter(Boolean).join("\\n");
+      const summary = d.overtime > 0 ? `${s.emoji} ${s.label} Shift (+${d.overtime}hr OT)` : `${s.emoji} ${s.label} Shift`;
 
       lines.push("BEGIN:VEVENT");
       lines.push(`UID:shift-${dateKey}-${sh}${sm}@nurseplanner`);
       lines.push(`DTSTART;TZID=Australia/Sydney:${ds}T${sh}${sm}00`);
       lines.push(`DTEND;TZID=Australia/Sydney:${ds}T${eh}${em}00`);
-      lines.push(`SUMMARY:${s.emoji} ${s.label} Shift`);
+      lines.push(`SUMMARY:${summary}`);
       if (desc) lines.push(`DESCRIPTION:${desc}`);
       lines.push(`COLOR:${s.color}`);
       lines.push("END:VEVENT");
@@ -198,7 +200,9 @@ function DayTooltip({ day, month, year, dayKey, data, pos, colIndex }) {
           <div>
             <div style={{ fontSize:11,fontWeight:800,color:shift.color }}>{shift.label}</div>
             {d.shiftStart && d.shiftDuration && (
-              <div style={{ fontSize:9,color:P.muted,marginTop:1 }}>{d.shiftStart} → {addHours(d.shiftStart,d.shiftDuration)} · {d.shiftDuration}hr</div>
+              <div style={{ fontSize:9,color:P.muted,marginTop:1 }}>
+                {d.shiftStart} → {addHours(d.shiftStart, (d.shiftDuration||0)+(d.overtime||0))} · {d.shiftDuration}hr{d.overtime>0&&<span style={{ color:"#B45309",fontWeight:700 }}> +{d.overtime}hr OT</span>}
+              </div>
             )}
           </div>
         </div>
@@ -384,13 +388,16 @@ function DayModal({ day, month, year, existing, onSave, onClose }) {
   const [payAmt, setPayAmt]           = useState(existing?.payAmount || "");
   const [regularAmt, setRegularAmt]   = useState(existing?.regularAmount || "");
   const [fortnightly, setFortnightly] = useState(existing?.repeatFortnightly || false);
+  const [overtime, setOvertime]       = useState(existing?.overtime || 0);
   const [custom, setCustom]           = useState("");
   const isRepeat     = existing?.isFortnightlyRepeat || false;
   const isOverridden = isRepeat && payAmt && regularAmt && payAmt !== regularAmt;
 
-  const dayLabel  = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(year,month,day).getDay()];
-  const endTime   = (shiftStart && shiftDuration) ? addHours(shiftStart, shiftDuration) : null;
-  const timeOpts  = shiftDuration ? SHIFT_TIMES[shiftDuration] : [];
+  const OT_OPTIONS = [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4];
+  const dayLabel   = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(year,month,day).getDay()];
+  const totalHrs   = (shiftDuration || 0) + (overtime || 0);
+  const endTime    = (shiftStart && shiftDuration) ? addHours(shiftStart, totalHrs) : null;
+  const timeOpts   = shiftDuration ? SHIFT_TIMES[shiftDuration] : [];
 
   function addActivity(label) {
     if (!label.trim()||acts.length>=5) return;
@@ -454,12 +461,42 @@ function DayModal({ day, month, year, existing, onSave, onClose }) {
                 })}
               </div>
               {shiftStart && endTime && (
-                <div style={{ marginTop:12,padding:"10px 14px",background:SHIFTS[shift].bg,borderRadius:10,display:"flex",justifyContent:"space-between",alignItems:"center" }}>
-                  <div>
-                    <div style={{ fontSize:9,color:P.muted,fontWeight:700,letterSpacing:"1px",textTransform:"uppercase",marginBottom:2 }}>Selected</div>
-                    <div style={{ fontSize:16,fontWeight:800,color:SHIFTS[shift].color }}>{shiftStart} → {endTime}</div>
+                <div style={{ marginTop:12 }}>
+                  {/* ── SELECTED SUMMARY ── */}
+                  <div style={{ padding:"10px 14px",background:SHIFTS[shift].bg,borderRadius:10,display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10 }}>
+                    <div>
+                      <div style={{ fontSize:9,color:P.muted,fontWeight:700,letterSpacing:"1px",textTransform:"uppercase",marginBottom:2 }}>
+                        {overtime > 0 ? "Shift + OT" : "Selected"}
+                      </div>
+                      <div style={{ fontSize:16,fontWeight:800,color:SHIFTS[shift].color }}>{shiftStart} → {endTime}</div>
+                      {overtime > 0 && (
+                        <div style={{ fontSize:10,color:P.muted,marginTop:2 }}>
+                          {shiftDuration}hr shift + <span style={{ color:"#B45309",fontWeight:700 }}>+{overtime}hr OT</span> = {totalHrs}hr total
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ textAlign:"right" }}>
+                      <div style={{ fontSize:10,color:P.muted }}>{SHIFTS[shift].emoji} {SHIFTS[shift].label}</div>
+                      {overtime > 0 && <div style={{ fontSize:11,fontWeight:800,color:"#B45309",marginTop:2,background:"#FEF3C7",borderRadius:6,padding:"2px 7px" }}>OT +{overtime}hr</div>}
+                    </div>
                   </div>
-                  <div style={{ textAlign:"right",fontSize:10,color:P.muted }}>{shiftDuration}hr {SHIFTS[shift].emoji} {SHIFTS[shift].label}</div>
+
+                  {/* ── OVERTIME PICKER ── */}
+                  <div style={{ background:"#FEF9F0",border:"1.5px solid #FDE68A",borderRadius:12,padding:12 }}>
+                    <div style={{ fontSize:9,color:"#B45309",fontWeight:800,letterSpacing:"1px",textTransform:"uppercase",marginBottom:8 }}>
+                      ⏱ Overtime (up to +4hr)
+                    </div>
+                    <div style={{ display:"flex",flexWrap:"wrap",gap:6 }}>
+                      <button onClick={()=>setOvertime(0)} style={{ padding:"6px 10px",borderRadius:8,border:`1.5px solid ${overtime===0?"#B45309":"#FDE68A"}`,background:overtime===0?"#FEF3C7":"white",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,color:overtime===0?"#B45309":"#92400E",transition:"all .12s" }}>
+                        None
+                      </button>
+                      {OT_OPTIONS.map(h=>(
+                        <button key={h} onClick={()=>setOvertime(overtime===h?0:h)} style={{ padding:"6px 10px",borderRadius:8,border:`1.5px solid ${overtime===h?"#B45309":"#FDE68A"}`,background:overtime===h?"#FEF3C7":"white",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,color:overtime===h?"#B45309":"#92400E",transition:"all .12s" }}>
+                          +{h}hr
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -576,7 +613,7 @@ function DayModal({ day, month, year, existing, onSave, onClose }) {
         )}
       </div>
 
-      <button onClick={()=>onSave({ shift,shiftDuration,shiftStart,activities:acts,payday,payAmount:payAmt,regularAmount:regularAmt||payAmt,repeatFortnightly:fortnightly,manualOverride:isRepeat&&isOverridden })}
+      <button onClick={()=>onSave({ shift,shiftDuration,shiftStart,overtime,activities:acts,payday,payAmount:payAmt,regularAmount:regularAmt||payAmt,repeatFortnightly:fortnightly,manualOverride:isRepeat&&isOverridden })}
         style={{ ...S.btnPrimary,width:"100%",padding:14,fontSize:14,letterSpacing:"0.3px" }}>
         Save Day ✓
       </button>
@@ -766,6 +803,7 @@ function NurseShiftPlanner() {
                 {shift&&(
                   <div style={{ fontSize:7.5,fontWeight:800,padding:"2px 5px",borderRadius:20,display:"inline-flex",alignItems:"center",gap:2,marginBottom:3,background:shift.color,color:P.white,whiteSpace:"nowrap" }}>
                     {shift.emoji} {shift.label}{d.shiftStart&&<span style={{ opacity:.8 }}> {d.shiftStart}</span>}
+                    {d.overtime>0&&<span style={{ background:"rgba(0,0,0,.25)",borderRadius:8,padding:"0 4px",marginLeft:1 }}>+{d.overtime}hr</span>}
                   </div>
                 )}
 
