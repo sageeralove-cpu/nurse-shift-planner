@@ -1,0 +1,9 @@
+{
+  "name": "nurse-shift-planner",
+  "version": "5.0.0",
+  "description": "Nursing shift planner for Australian nurses — by Elite Nurse Jackie",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "resend": "^3.2.0"
+  }
+}

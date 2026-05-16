@@ -1,0 +1,14 @@
+{
+  "functions": {
+    "api/*.js": {
+      "runtime": "@vercel/node"
+    }
+  },
+  "rewrites": [
+    { "source": "/api/kofi-webhook", "destination": "/api/kofi-webhook.js" },
+    { "source": "/api/verify-code", "destination": "/api/verify-code.js" },
+    { "source": "/api/submit-review", "destination": "/api/submit-review.js" },
+    { "source": "/api/get-reviews", "destination": "/api/get-reviews.js" },
+    { "source": "/api/admin-generate-code", "destination": "/api/admin-generate-code.js" }
+  ]
+}
