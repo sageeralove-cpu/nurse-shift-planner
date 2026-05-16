@@ -1,5 +1,3 @@
-$ cat /Users/jackiedouma/nurse-shift-planner/api/admin-generate-code.js
-
 // Admin — generate unique ENJ-XXXXXX code, optionally email via Resend REST API
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -41,8 +39,8 @@ module.exports = async (req, res) => {
         body: JSON.stringify({ code, email: email || null })
       });
       if (r.ok || r.status === 201) { inserted = true; break; }
-      const err = await r.json();
-      if (!err?.message?.includes('duplicate')) break; // non-collision error, stop
+      const errBody = await r.json().catch(() => ({}));
+      if (!errBody?.message?.includes('duplicate')) break; // non-collision error, stop
     }
     if (!inserted) return res.status(500).json({ error: 'Could not generate unique code' });
 
@@ -69,7 +67,7 @@ module.exports = async (req, res) => {
               <li>Click "I've already paid — enter my code"</li>
               <li>Enter your code — you're in! 🎉</li>
             </ol>
-            <p style="color:#64748b;font-size:12px;">Built with 💙 for Australian nurses.</p>
+            <p style="color:#64748b;font-size:12px;">Your code is personal — please don't share it. Built with 💙 for Australian nurses.</p>
           </div>`
         })
       });
@@ -77,43 +75,6 @@ module.exports = async (req, res) => {
     }
 
     return res.status(200).json({ ok: true, code, emailSent });
-  } catch (err) {
-    console.error('admin-generate-code error:', err);
-    return res.status(500).json({ error: err.message });
-  }
-};        code,
-        email: email || null
-      });
-      if (!error) { inserted = true; break; }
-    }
-    if (!inserted) return res.status(500).json({ error: 'Could not generate unique code' });
-
-    if (sendEmail && email && process.env.RESEND_API_KEY) {
-      const resend = new Resend(process.env.RESEND_API_KEY);
-      await resend.emails.send({
-        from: 'Elite Nurse Jackie <no-reply@elitenursejackie.com>',
-        to: email,
-        subject: '🏥 Your Nurse Shift Planner Access Code',
-        html: `
-          <div style="font-family:Inter,sans-serif;max-width:520px;margin:0 auto;background:#0f172a;color:#e2e8f0;padding:40px;border-radius:12px;">
-            <h1 style="color:#3b82f6;margin-bottom:4px;">🏥 Nurse Shift Planner</h1>
-            <p style="color:#94a3b8;margin-top:0;">by Elite Nurse Jackie</p>
-            <hr style="border-color:#1e3a5f;margin:24px 0;">
-            <p>Thank you so much for your support! 💙</p>
-            <div style="background:#1e3a5f;border:2px solid #3b82f6;border-radius:8px;padding:20px;text-align:center;margin:24px 0;">
-              <span style="font-size:28px;font-weight:700;letter-spacing:4px;color:#60a5fa;">${code}</span>
-            </div>
-            <ol style="color:#94a3b8;line-height:1.8;">
-              <li>Go to <a href="https://nurse-shift-planner.vercel.app" style="color:#3b82f6;">nurse-shift-planner.vercel.app</a></li>
-              <li>Click "I've already paid — enter my code"</li>
-              <li>Enter your code above — you're in! 🎉</li>
-            </ol>
-          </div>
-        `
-      });
-    }
-
-    return res.status(200).json({ ok: true, code, emailSent: !!(sendEmail && email && process.env.RESEND_API_KEY) });
   } catch (err) {
     console.error('admin-generate-code error:', err);
     return res.status(500).json({ error: err.message });

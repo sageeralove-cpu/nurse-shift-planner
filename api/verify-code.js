@@ -1,5 +1,3 @@
-$ cat /Users/jackiedouma/nurse-shift-planner/api/verify-code.js
-
 // Verify an ENJ-XXXXXX access code — uses native fetch, no npm packages needed
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -27,7 +25,7 @@ module.exports = async (req, res) => {
     const row = rows[0];
     if (row.used) return res.status(200).json({ valid: false, error: 'Code already used' });
 
-    // Mark as used
+    // Mark as used (single-use enforcement)
     await fetch(
       `${SUPABASE_URL}/rest/v1/access_codes?code=eq.${encodeURIComponent(clean)}`,
       {
