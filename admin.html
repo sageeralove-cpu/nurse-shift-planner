@@ -337,6 +337,228 @@
     padding: 12px 16px;
     font-size: 13px;
     display: none;
+    word-break: break-word;
+  }
+  .error.show { display: block; }
+  .tag { font-size: 11px; color: #64748b; margin-top: 8px; }
+  .history { margin-top: 32px; }
+  .history h2 { font-size: 14px; color: #94a3b8; margin-bottom: 12px; }
+  .hist-item {
+    background: #0f172a;
+    border: 1px solid #1e3a5f;
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .hist-code { color: #60a5fa; font-weight: 600; letter-spacing: 1px; }
+  .hist-email { color: #64748b; }
+  .hist-time { color: #475569; font-size: 11px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🏥 Admin — Code Generator</h1>
+  <p class="sub">Elite Nurse Jackie · nurse-shift-planner</p>
+
+  <label>Admin Password</label>
+  <input type="password" id="secret" placeholder="Enter admin password" autocomplete="current-password">
+
+  <label>Buyer Email (optional — needed to send email)</label>
+  <input type="email" id="email" placeholder="nurse@example.com">
+
+  <div class="row">
+    <button class="toggle" id="sendToggle" onclick="toggleSend()" aria-label="Send email toggle"></button>
+    <label for="sendToggle">Send access code email to buyer</label>
+  </div>
+
+  <button class="btn" id="generateBtn" onclick="generate()">✨ Generate Access Code</button>
+
+  <div class="error" id="errorBox"></div>
+
+  <div class="result" id="resultBox">
+    <p style="color:#94a3b8;font-size:13px;">New access code generated:</p>
+    <div class="code" id="codeDisplay"></div>
+    <p class="tag" id="emailTag"></p>
+    <button class="copy-btn" onclick="copyCode()">📋 Copy Code</button>
+  </div>
+
+  <div class="history" id="historySection" style="display:none">
+    <h2>Generated this session</h2>
+    <div id="historyList"></div>
+  </div>
+</div>
+
+<script>
+  let sendEmail = false;
+  const history = [];
+
+  function toggleSend() {
+    sendEmail = !sendEmail;
+    document.getElementById('sendToggle').classList.toggle('on', sendEmail);
+  }
+
+  async function generate() {
+    const secret = document.getElementById('secret').value.trim();
+    const email = document.getElementById('email').value.trim();
+    const btn = document.getElementById('generateBtn');
+    const errorBox = document.getElementById('errorBox');
+    const resultBox = document.getElementById('resultBox');
+
+    errorBox.classList.remove('show');
+    resultBox.classList.remove('show');
+
+    if (!secret) { showError('Enter your admin password first.'); return; }
+
+    btn.disabled = true;
+    btn.textContent = 'Generating…';
+
+    try {
+      const res = await fetch('/api/admin-generate-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+        body: JSON.stringify({ email: email || undefined, sendEmail: sendEmail && !!email })
+      });
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch(e) {
+        showError(`Server returned status ${res.status} — response: ${text.slice(0, 300)}`);
+        return;
+      }
+
+      if (!res.ok || !data.ok) {
+        showError(`Error ${res.status}: ${data.error || JSON.stringify(data)}`);
+      } else {
+        document.getElementById('codeDisplay').textContent = data.code;
+        document.getElementById('emailTag').textContent = data.emailSent
+          ? `✅ Email sent to ${email}`
+          : email ? '⚠️ Email not sent (check Resend key in Vercel env vars)' : 'No email — copy and send manually';
+        resultBox.classList.add('show');
+
+        history.unshift({ code: data.code, email: email || '—', time: new Date().toLocaleTimeString() });
+        renderHistory();
+      }
+    } catch (err) {
+      showError('Network error — check you are on nurse-shift-planner.vercel.app (not a local file). Detail: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '✨ Generate Access Code';
+    }
+  }
+
+  function copyCode() {
+    const code = document.getElementById('codeDisplay').textContent;
+    navigator.clipboard.writeText(code).then(() => {
+      const btn = document.querySelector('.copy-btn');
+      btn.textContent = '✅ Copied!';
+      setTimeout(() => btn.textContent = '📋 Copy Code', 2000);
+    });
+  }
+
+  function showError(msg) {
+    const box = document.getElementById('errorBox');
+    box.textContent = msg;
+    box.classList.add('show');
+  }
+
+  function renderHistory() {
+    const section = document.getElementById('historySection');
+    const list = document.getElementById('historyList');
+    section.style.display = 'block';
+    list.innerHTML = history.map(h => `
+      <div class="hist-item">
+        <span class="hist-code">${h.code}</span>
+        <span class="hist-email">${h.email}</span>
+        <span class="hist-time">${h.time}</span>
+      </div>
+    `).join('');
+  }
+</script>
+</body>
+</html>    font-size: 14px;
+    font-family: inherit;
+  }
+  input:focus, textarea:focus { outline: none; border-color: #3b82f6; }
+  input[type=password] { letter-spacing: 2px; }
+  .row { display: flex; align-items: center; gap: 10px; margin-top: 18px; }
+  .row label { margin: 0; }
+  .toggle {
+    width: 36px; height: 20px;
+    background: #334155;
+    border-radius: 10px;
+    position: relative;
+    cursor: pointer;
+    flex-shrink: 0;
+    border: none;
+    transition: background .2s;
+  }
+  .toggle.on { background: #3b82f6; }
+  .toggle::after {
+    content: '';
+    position: absolute;
+    width: 14px; height: 14px;
+    background: #fff;
+    border-radius: 50%;
+    top: 3px; left: 3px;
+    transition: left .2s;
+  }
+  .toggle.on::after { left: 19px; }
+  .btn {
+    margin-top: 24px;
+    width: 100%;
+    padding: 14px;
+    background: #3b82f6;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .2s;
+  }
+  .btn:hover { background: #2563eb; }
+  .btn:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
+  .result {
+    margin-top: 24px;
+    background: #0f172a;
+    border: 2px solid #3b82f6;
+    border-radius: 10px;
+    padding: 20px;
+    text-align: center;
+    display: none;
+  }
+  .result.show { display: block; }
+  .code {
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: 4px;
+    color: #60a5fa;
+    margin: 8px 0;
+  }
+  .copy-btn {
+    margin-top: 12px;
+    padding: 8px 20px;
+    background: #1e3a5f;
+    color: #3b82f6;
+    border: 1px solid #3b82f6;
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .copy-btn:hover { background: #3b82f6; color: #fff; }
+  .error {
+    margin-top: 16px;
+    background: #450a0a;
+    border: 1px solid #dc2626;
+    color: #fca5a5;
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 13px;
+    display: none;
   }
   .error.show { display: block; }
   .tag { font-size: 11px; color: #64748b; margin-top: 8px; }
