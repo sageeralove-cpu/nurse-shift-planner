@@ -73,6 +73,102 @@ const OT_CHIPS = Array.from({length: 25}, (_, i) => {
 
 const STORAGE_KEY = 'nurseShiftData_v1';
 const TAX_KEY = 'nurseTaxSettings_v1';
+const RATES_KEY = 'ENJ_RATES';
+
+// ── Australian Public Holidays (National + per-state, 2025-2026) ────────────
+const AU_NATIONAL_HOLIDAYS = {
+  // 2025
+  '2025-1-1':   'New Year\'s Day',
+  '2025-1-27':  'Australia Day (observed)',
+  '2025-4-18':  'Good Friday',
+  '2025-4-19':  'Easter Saturday',
+  '2025-4-20':  'Easter Sunday',
+  '2025-4-21':  'Easter Monday',
+  '2025-4-25':  'ANZAC Day',
+  '2025-12-25': 'Christmas Day',
+  '2025-12-26': 'Boxing Day',
+  // 2026
+  '2026-1-1':   'New Year\'s Day',
+  '2026-1-26':  'Australia Day',
+  '2026-4-3':   'Good Friday',
+  '2026-4-4':   'Easter Saturday',
+  '2026-4-5':   'Easter Sunday',
+  '2026-4-6':   'Easter Monday',
+  '2026-4-25':  'ANZAC Day',
+  '2026-12-25': 'Christmas Day',
+  '2026-12-26': 'Boxing Day',
+};
+
+const AU_STATE_HOLIDAYS = {
+  NSW: {
+    '2025-6-9':   'King\'s Birthday',
+    '2025-8-4':   'Bank Holiday',
+    '2025-10-6':  'Labour Day',
+    '2026-6-8':   'King\'s Birthday',
+    '2026-8-3':   'Bank Holiday',
+    '2026-10-5':  'Labour Day',
+  },
+  VIC: {
+    '2025-3-10':  'Labour Day',
+    '2025-6-9':   'King\'s Birthday',
+    '2025-11-4':  'Melbourne Cup Day',
+    '2026-3-9':   'Labour Day',
+    '2026-6-8':   'King\'s Birthday',
+    '2026-11-3':  'Melbourne Cup Day',
+  },
+  QLD: {
+    '2025-5-5':   'Labour Day',
+    '2025-8-13':  'Royal Queensland Show',
+    '2025-10-6':  'King\'s Birthday',
+    '2026-5-4':   'Labour Day',
+    '2026-10-5':  'King\'s Birthday',
+  },
+  SA: {
+    '2025-3-10':  'Adelaide Cup',
+    '2025-6-9':   'King\'s Birthday',
+    '2025-10-6':  'Labour Day',
+    '2026-3-9':   'Adelaide Cup',
+    '2026-6-8':   'King\'s Birthday',
+    '2026-10-5':  'Labour Day',
+  },
+  WA: {
+    '2025-3-3':   'Labour Day',
+    '2025-9-22':  'King\'s Birthday',
+    '2026-3-2':   'Labour Day',
+    '2026-9-28':  'King\'s Birthday',
+  },
+  TAS: {
+    '2025-2-10':  'Royal Hobart Regatta',
+    '2025-3-10':  'Eight Hours Day',
+    '2025-6-9':   'King\'s Birthday',
+    '2026-2-9':   'Royal Hobart Regatta',
+    '2026-3-9':   'Eight Hours Day',
+    '2026-6-8':   'King\'s Birthday',
+  },
+  ACT: {
+    '2025-3-10':  'Canberra Day',
+    '2025-5-26':  'Reconciliation Day',
+    '2025-6-9':   'King\'s Birthday',
+    '2025-8-4':   'Family & Community Day',
+    '2026-3-9':   'Canberra Day',
+    '2026-5-25':  'Reconciliation Day',
+    '2026-6-8':   'King\'s Birthday',
+  },
+  NT: {
+    '2025-5-5':   'May Day',
+    '2025-6-9':   'King\'s Birthday',
+    '2025-8-11':  'Picnic Day',
+    '2026-5-4':   'May Day',
+    '2026-6-8':   'King\'s Birthday',
+    '2026-8-10':  'Picnic Day',
+  },
+};
+
+function getHolidays(state) {
+  const stateHols = state && state !== 'ALL' ? AU_STATE_HOLIDAYS[state] || {} : {};
+  return { ...AU_NATIONAL_HOLIDAYS, ...stateHols };
+}
+function holidayKey(y, m, d) { return `${y}-${m}-${d}`; }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function dateKey(y, m, d) { return `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`; }
@@ -229,9 +325,10 @@ function Paywall({ onUnlock }) {
       const data = await res.json();
       if (data.valid) {
         localStorage.setItem('ENJ_UNLOCKED', 'true');
-        onUnlock();
+        if (data.sync_token) localStorage.setItem('ENJ_SYNC_TOKEN', data.sync_token);
+        onUnlock(data.restored);
       } else {
-        setError('Code not found or already used — check your email');
+        setError(data.error || 'Code not found — check your email from Elite Nurse Jackie');
       }
     } catch {
       setError('Connection error — please try again');
@@ -1106,38 +1203,159 @@ function generateICS(allData) {
 }
 
 function ICSModal({ allData, onClose }) {
-  function download() {
+  const [done, setDone] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const syncToken = localStorage.getItem('ENJ_SYNC_TOKEN');
+  const baseUrl = window.location.origin;
+  const webcalUrl = syncToken ? `webcal://${window.location.host}/api/calendar/${syncToken}` : null;
+  const httpsUrl = syncToken ? `${baseUrl}/api/calendar/${syncToken}` : null;
+
+  function copyLink() {
+    if (!httpsUrl) return;
+    navigator.clipboard.writeText(httpsUrl).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2500); });
+  }
+
+  function triggerDownload() {
     const ics = generateICS(allData);
-    const blob = new Blob([ics], { type: 'text/calendar' });
+    const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = 'nurse-shifts.ics';
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
   }
+
+  function handlePlatform(id) {
+    triggerDownload();
+    setDone(id);
+    if (id === 'google') {
+      setTimeout(() => window.open('https://calendar.google.com/calendar/r/settings/import', '_blank'), 700);
+    }
+    if (id === 'outlook') {
+      setTimeout(() => window.open('https://outlook.live.com/calendar/0/addcalendar', '_blank'), 700);
+    }
+  }
+
+  const platforms = [
+    {
+      id: 'iphone',
+      icon: '📱',
+      label: 'iPhone & iPad',
+      sub: 'Downloads file → open from Files app',
+      steps: ['1. Open the Downloads folder in your Files app', '2. Tap nurse-shifts.ics', '3. Tap "Add All" — your shifts appear in Calendar ✅'],
+      color: '#2563eb',
+    },
+    {
+      id: 'mac',
+      icon: '🍎',
+      label: 'Mac Calendar',
+      sub: 'Downloads file → double-click to import',
+      steps: ['1. Find nurse-shifts.ics in your Downloads folder', '2. Double-click it — Calendar opens automatically', '3. Click "Add All Events" ✅'],
+      color: '#16a34a',
+    },
+    {
+      id: 'google',
+      icon: '📅',
+      label: 'Google Calendar',
+      sub: 'Downloads file + opens import page',
+      steps: ['1. Google Calendar import page opens in a new tab', '2. Click "Select file from your computer"', '3. Choose nurse-shifts.ics → click Import ✅'],
+      color: '#dc2626',
+    },
+    {
+      id: 'outlook',
+      icon: '📧',
+      label: 'Outlook',
+      sub: 'Downloads file + opens Outlook',
+      steps: ['1. In the Outlook page that opens, look for "Add calendar"', '2. Choose "Upload from file"', '3. Select nurse-shifts.ics ✅'],
+      color: '#7c3aed',
+    },
+  ];
+
+  const selected = platforms.find(p => p.id === done);
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal-box" style={{ maxWidth: 460 }}>
-        <div style={{ padding: '20px 20px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ fontWeight: 700, fontSize: 16, color: '#f1f5f9' }}>📆 Sync Calendar</div>
+        <div style={{ padding: '20px 20px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 16, color: '#f1f5f9' }}>📆 Calendar Sync</div>
+            <div style={{ fontSize: 12, color: '#64748b', marginTop: 3 }}>Live sync or one-time export</div>
+          </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 22, cursor: 'pointer' }}>×</button>
         </div>
-        <div style={{ padding: '16px 20px 20px' }}>
-          <button onClick={download} className="btn" style={{ width: '100%', padding: '13px', background: '#3b82f6', color: '#fff', fontSize: 15, fontWeight: 700, marginBottom: 20 }}>
-            ⬇ Download .ics file
-          </button>
-          {[
-            ['📱 iPhone / iPad', 'Tap the .ics file in Files → tap again → "Add All" to Calendar'],
-            ['🍎 Mac', 'Double-click the .ics file → Calendar opens and imports events'],
-            ['📅 Google Calendar', 'Open calendar.google.com → Settings → Import → upload .ics file'],
-            ['📧 Outlook', 'File → Open & Export → Import/Export → Import iCalendar (.ics)'],
-          ].map(([title, desc]) => (
-            <div key={title} style={{ marginBottom: 12, background: '#0f172a', borderRadius: 8, padding: '10px 14px', border: '1px solid #1e293b' }}>
-              <div style={{ fontWeight: 600, fontSize: 13, color: '#e2e8f0', marginBottom: 3 }}>{title}</div>
-              <div style={{ fontSize: 12, color: '#64748b' }}>{desc}</div>
+
+        {/* ── Live Sync Section ── */}
+        {webcalUrl ? (
+          <div style={{ margin: '0 20px 16px', background: '#0a1628', border: '1px solid #1e40af', borderRadius: 12, padding: '14px 16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <div style={{ width: 8, height: 8, background: '#22c55e', borderRadius: '50%', boxShadow: '0 0 6px #22c55e' }}></div>
+              <div style={{ fontWeight: 700, fontSize: 13, color: '#60a5fa' }}>Live Sync — stays up to date automatically</div>
             </div>
+            <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 10 }}>
+              Subscribe once → your calendar updates whenever you change shifts. No re-exporting needed.
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <a href={webcalUrl} style={{ flex: 1, minWidth: 120, padding: '9px 12px', background: '#1e3a5f', border: '1px solid #3b82f6', borderRadius: 8, color: '#60a5fa', fontWeight: 700, fontSize: 12, textDecoration: 'none', textAlign: 'center', display: 'block' }}>
+                📱 iPhone / Mac — Subscribe
+              </a>
+              <a href={`https://calendar.google.com/calendar/r/settings/addbyurl?url=${encodeURIComponent(httpsUrl)}`} target="_blank" rel="noreferrer"
+                style={{ flex: 1, minWidth: 120, padding: '9px 12px', background: '#1e3a5f', border: '1px solid #3b82f6', borderRadius: 8, color: '#60a5fa', fontWeight: 700, fontSize: 12, textDecoration: 'none', textAlign: 'center', display: 'block' }}>
+                📅 Google Calendar — Subscribe
+              </a>
+            </div>
+            <button onClick={copyLink} style={{ marginTop: 8, width: '100%', padding: '7px', background: 'transparent', border: '1px solid #334155', borderRadius: 8, color: copied ? '#22c55e' : '#64748b', fontSize: 11, cursor: 'pointer' }}>
+              {copied ? '✅ Link copied!' : '🔗 Copy subscription link (for Outlook or other apps)'}
+            </button>
+          </div>
+        ) : (
+          <div style={{ margin: '0 20px 16px', background: '#0a1628', border: '1px solid #334155', borderRadius: 12, padding: '12px 14px' }}>
+            <div style={{ fontSize: 12, color: '#64748b' }}>🔒 Live sync available after you enter your access code. Re-enter your code to activate.</div>
+          </div>
+        )}
+
+        <div style={{ padding: '0 20px 8px' }}>
+          <div style={{ fontSize: 11, color: '#475569', fontWeight: 600, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Or download a one-time snapshot</div>
+        </div>
+
+        <div style={{ padding: '0 20px 16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          {platforms.map(p => (
+            <button
+              key={p.id}
+              onClick={() => handlePlatform(p.id)}
+              className="btn"
+              style={{
+                padding: '14px 12px',
+                background: done === p.id ? p.color : '#1e293b',
+                border: `2px solid ${done === p.id ? p.color : '#334155'}`,
+                borderRadius: 10,
+                textAlign: 'left',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+              }}
+            >
+              <div style={{ fontSize: 24, marginBottom: 6 }}>{p.icon}</div>
+              <div style={{ fontWeight: 700, fontSize: 13, color: done === p.id ? '#fff' : '#e2e8f0', marginBottom: 3 }}>{p.label}</div>
+              <div style={{ fontSize: 11, color: done === p.id ? 'rgba(255,255,255,0.8)' : '#64748b', lineHeight: 1.4 }}>{p.sub}</div>
+            </button>
           ))}
+        </div>
+
+        {selected && (
+          <div style={{ margin: '0 20px 16px', background: '#0f172a', borderRadius: 10, border: `1px solid ${selected.color}`, padding: '14px 16px' }}>
+            <div style={{ fontWeight: 700, fontSize: 13, color: selected.color, marginBottom: 10 }}>✅ File downloaded! Next steps:</div>
+            {selected.steps.map((s, i) => (
+              <div key={i} style={{ fontSize: 13, color: '#cbd5e1', marginBottom: 6, lineHeight: 1.5 }}>{s}</div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ padding: '0 20px 16px' }}>
+          <div style={{ fontSize: 11, color: '#475569', textAlign: 'center', lineHeight: 1.5 }}>
+            💡 This exports a snapshot of your current shifts. Re-export anytime your roster changes.
+          </div>
         </div>
       </div>
     </div>
@@ -1145,7 +1363,7 @@ function ICSModal({ allData, onClose }) {
 }
 
 // ── Calendar Cell ──────────────────────────────────────────────────────────
-function CalCell({ year, month, day, data, isToday, isWeekend, onOpen, onTooltip, onTooltipHide }) {
+function CalCell({ year, month, day, data, isToday, isWeekend, holiday, onOpen, onTooltip, onTooltipHide }) {
   const ref = useRef(null);
   const timerRef = useRef(null);
 
@@ -1188,11 +1406,18 @@ function CalCell({ year, month, day, data, isToday, isWeekend, onOpen, onTooltip
       onMouseOver={e => e.currentTarget.style.background = '#253347'}
       onMouseOut={e => e.currentTarget.style.background = isWeekend ? '#141f30' : '#1e293b'}
     >
-      <div style={{
-        fontSize: 12, fontWeight: isToday ? 700 : 400,
-        color: isToday ? '#60a5fa' : isWeekend ? '#64748b' : '#94a3b8',
-        marginBottom: 4,
-      }}>{day}</div>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 4 }}>
+        <div style={{
+          fontSize: 12, fontWeight: isToday ? 700 : 400,
+          color: isToday ? '#60a5fa' : isWeekend ? '#64748b' : '#94a3b8',
+        }}>{day}</div>
+        {holiday && <div style={{ fontSize: 8, color: '#f59e0b', fontWeight: 700, textAlign: 'right', lineHeight: 1.2, maxWidth: 48, wordBreak: 'break-word' }}>🎉</div>}
+      </div>
+      {holiday && (
+        <div style={{ fontSize: 9, color: '#f59e0b', fontWeight: 600, marginBottom: 3, lineHeight: 1.2, wordBreak: 'break-word', whiteSpace: 'normal' }}>
+          {holiday}
+        </div>
+      )}
 
       {s && (
         <div style={{
@@ -1265,9 +1490,72 @@ function App() {
   const [tooltip, setTooltip] = useState(null); // {data, rect, col}
   const tooltipTimerRef = useRef(null);
   const [lightMode, setLightMode] = useState(() => localStorage.getItem('ENJ_LIGHT') === '1');
+  const [showHolidays, setShowHolidays] = useState(() => localStorage.getItem('ENJ_HOLIDAYS') !== '0');
+  const [holidayState, setHolidayState] = useState(() => localStorage.getItem('ENJ_HOL_STATE') || 'NSW');
+  const [showSettings, setShowSettings] = useState(false);
+  const [payRates, setPayRates] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(RATES_KEY)) || {}; } catch { return {}; }
+  });
+
+  function saveRates(r) {
+    setPayRates(r);
+    localStorage.setItem(RATES_KEY, JSON.stringify(r));
+  }
+
+  // Upcoming 14-day pay estimate
+  const upcomingPay = useMemo(() => {
+    const base = parseFloat(payRates.base) || 0;
+    if (!base) return null;
+    const aft   = parseFloat(payRates.aft)   || base;
+    const night = parseFloat(payRates.night) || base;
+    const sat   = parseFloat(payRates.sat)   || base;
+    const sun   = parseFloat(payRates.sun)   || base;
+    const ph    = parseFloat(payRates.ph)    || base;
+    const holidays = getHolidays(holidayState);
+    let gross = 0;
+    const now = new Date();
+    for (let i = 0; i < 14; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i);
+      const y = d.getFullYear(), mo = d.getMonth(), day = d.getDate();
+      const dk = dateKey(y, mo, day);
+      const data = allData[dk];
+      if (!data?.shiftType || ['rdo','leave','off'].includes(data.shiftType)) continue;
+      const otHours = data.otChip ? parseFloat(data.otChip.replace('+','').replace('hr','')) || 0 : 0;
+      const hours = (parseFloat(data.duration) || 8.5) + otHours;
+      const dow = d.getDay(); // 0=Sun, 6=Sat
+      const hKey = holidayKey(y, mo + 1, day);
+      let rate;
+      if (showHolidays && holidays[hKey]) rate = ph;
+      else if (dow === 0) rate = sun;
+      else if (dow === 6) rate = sat;
+      else if (data.shiftType === 'night') rate = night;
+      else if (data.shiftType === 'evening') rate = aft;
+      else rate = base;
+      gross += hours * rate;
+    }
+    if (gross === 0) return { gross: 0, net: 0, tax: 0, noShifts: true };
+    const annualGross = gross * 26;
+    const tr = calcTax(annualGross, { residency: 'resident', tfThreshold: true, helpDebt: false });
+    const fortnightTax = tr.totalTax / 26;
+    return { gross, tax: fortnightTax, net: gross - fortnightTax, noShifts: false };
+  }, [allData, payRates, showHolidays, holidayState]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(allData));
+  }, [allData]);
+
+  // Auto-save shifts to Supabase for live calendar sync (debounced 4s)
+  useEffect(() => {
+    const sync_token = localStorage.getItem('ENJ_SYNC_TOKEN');
+    if (!sync_token) return;
+    const timer = setTimeout(() => {
+      fetch('/api/save-shifts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sync_token, shift_data: allData }),
+      }).catch(() => {}); // silent — don't disrupt UX if save fails
+    }, 4000);
+    return () => clearTimeout(timer);
   }, [allData]);
 
   const today = new Date();
@@ -1350,6 +1638,7 @@ function App() {
         <div style={{ flex: 1 }}></div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <button onClick={() => { const n = !lightMode; setLightMode(n); localStorage.setItem('ENJ_LIGHT', n ? '1' : '0'); }} className="btn" style={{ padding: '7px 12px', background: lightMode ? '#1e3a5f' : '#334155', color: lightMode ? '#60a5fa' : '#94a3b8', fontSize: 12 }}>{lightMode ? '🌙 Dark' : '☀️ Bright'}</button>
+          <button onClick={() => setShowSettings(s => !s)} className="btn" style={{ padding: '7px 12px', background: showSettings ? '#1e3a5f' : '#334155', color: showSettings ? '#60a5fa' : '#94a3b8', fontSize: 12 }}>⚙️ Settings</button>
           <button onClick={() => setShowTax(true)} className="btn" style={{ padding: '7px 12px', background: '#334155', color: '#94a3b8', fontSize: 12 }}>🧮 Tax Calc</button>
           <button onClick={() => setShowICS(true)} className="btn" style={{ padding: '7px 12px', background: '#334155', color: '#94a3b8', fontSize: 12 }}>📆 Sync Calendar</button>
           <button onClick={backup} className="btn" style={{ padding: '7px 12px', background: '#334155', color: '#94a3b8', fontSize: 12 }}>💾 Backup</button>
@@ -1405,6 +1694,7 @@ function App() {
               data={allData[dk]}
               isToday={isToday}
               isWeekend={isWeekend}
+              holiday={showHolidays ? (getHolidays(holidayState)[holidayKey(currentYear, currentMonth, day)] || null) : null}
               onOpen={(y, m, d) => setModalDay({ year: y, month: m, day: d })}
               onTooltip={(e, data, rect) => setTooltip({ data, rect, col: colIndex })}
               onTooltipHide={() => setTooltip(null)}
@@ -1437,6 +1727,131 @@ function App() {
         />
       )}
 
+      {/* Settings panel */}
+      {showSettings && (
+        <div style={{ position: 'fixed', top: 56, right: 12, zIndex: 500, background: '#1e293b', border: '1px solid #334155', borderRadius: 12, padding: '16px 18px', minWidth: 260, boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
+          <div style={{ fontWeight: 700, fontSize: 14, color: '#f1f5f9', marginBottom: 14 }}>⚙️ Settings</div>
+
+          {/* Holidays toggle */}
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <div style={{ fontSize: 13, color: '#cbd5e1', fontWeight: 600 }}>🎉 Public Holidays</div>
+              <button
+                onClick={() => { const n = !showHolidays; setShowHolidays(n); localStorage.setItem('ENJ_HOLIDAYS', n ? '1' : '0'); }}
+                style={{
+                  width: 40, height: 22, borderRadius: 11, border: 'none', cursor: 'pointer',
+                  background: showHolidays ? '#3b82f6' : '#334155',
+                  position: 'relative', transition: 'background 0.2s',
+                }}
+              >
+                <div style={{
+                  position: 'absolute', top: 3, left: showHolidays ? 21 : 3,
+                  width: 16, height: 16, background: '#fff', borderRadius: '50%',
+                  transition: 'left 0.2s',
+                }}></div>
+              </button>
+            </div>
+            {showHolidays && (
+              <div>
+                <div style={{ fontSize: 11, color: '#64748b', marginBottom: 6 }}>Show holidays for state:</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {['NSW','VIC','QLD','SA','WA','TAS','ACT','NT'].map(st => (
+                    <button key={st} onClick={() => { setHolidayState(st); localStorage.setItem('ENJ_HOL_STATE', st); }}
+                      style={{
+                        padding: '4px 10px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                        background: holidayState === st ? '#3b82f6' : '#0f172a',
+                        color: holidayState === st ? '#fff' : '#64748b',
+                        fontSize: 12, fontWeight: 600,
+                      }}>{st}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Pay Rates */}
+          <div style={{ borderTop: '1px solid #334155', paddingTop: 14, marginTop: 4, marginBottom: 14 }}>
+            <div style={{ fontSize: 13, color: '#cbd5e1', fontWeight: 600, marginBottom: 10 }}>💰 Pay Rates (per hour)</div>
+            {[
+              { key: 'base',  label: 'Day shift (base)',       placeholder: 'e.g. 45.00' },
+              { key: 'aft',   label: 'Afternoon / Evening',    placeholder: 'e.g. 51.75' },
+              { key: 'night', label: 'Night shift',            placeholder: 'e.g. 58.50' },
+              { key: 'sat',   label: 'Saturday',               placeholder: 'e.g. 67.50' },
+              { key: 'sun',   label: 'Sunday',                 placeholder: 'e.g. 90.00' },
+              { key: 'ph',    label: 'Public holiday',         placeholder: 'e.g. 112.50' },
+            ].map(({ key, label, placeholder }) => (
+              <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 7 }}>
+                <div style={{ fontSize: 12, color: '#94a3b8', flex: 1 }}>{label}</div>
+                <div style={{ position: 'relative' }}>
+                  <span style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: '#64748b', fontSize: 12 }}>$</span>
+                  <input
+                    type="number"
+                    value={payRates[key] || ''}
+                    onChange={e => saveRates({ ...payRates, [key]: e.target.value })}
+                    placeholder={placeholder}
+                    style={{
+                      width: 90, padding: '5px 6px 5px 18px', borderRadius: 6,
+                      background: '#0f172a', border: '1px solid #334155',
+                      color: '#e2e8f0', fontSize: 12, outline: 'none',
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+
+            {/* Upcoming fortnight estimate */}
+            {upcomingPay && (
+              <div style={{ background: '#0f172a', borderRadius: 10, padding: '10px 12px', marginTop: 10, border: '1px solid #1e3a5f' }}>
+                <div style={{ fontSize: 11, color: '#64748b', marginBottom: 7, fontWeight: 600 }}>📅 NEXT 14 DAYS ESTIMATE</div>
+                {upcomingPay.noShifts ? (
+                  <div style={{ fontSize: 12, color: '#475569' }}>No shifts logged in next 14 days</div>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <span style={{ fontSize: 12, color: '#94a3b8' }}>Gross pay</span>
+                      <span style={{ fontSize: 12, color: '#e2e8f0', fontWeight: 600 }}>{formatMoney(upcomingPay.gross)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <span style={{ fontSize: 12, color: '#94a3b8' }}>Est. tax withheld</span>
+                      <span style={{ fontSize: 12, color: '#f87171' }}>−{formatMoney(upcomingPay.tax)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #1e3a5f', paddingTop: 6, marginTop: 2 }}>
+                      <span style={{ fontSize: 13, color: '#cbd5e1', fontWeight: 700 }}>Take-home</span>
+                      <span style={{ fontSize: 13, color: '#34d399', fontWeight: 700 }}>{formatMoney(upcomingPay.net)}</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: '#475569', marginTop: 6 }}>Based on resident tax, tax-free threshold on. Open 🧮 Tax Calc for full breakdown.</div>
+                  </>
+                )}
+              </div>
+            )}
+            {!upcomingPay && (
+              <div style={{ fontSize: 11, color: '#475569', marginTop: 6 }}>Enter your base rate to see upcoming pay estimate.</div>
+            )}
+          </div>
+
+          {/* Light mode */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ fontSize: 13, color: '#cbd5e1', fontWeight: 600 }}>☀️ Bright Mode</div>
+            <button
+              onClick={() => { const n = !lightMode; setLightMode(n); localStorage.setItem('ENJ_LIGHT', n ? '1' : '0'); }}
+              style={{
+                width: 40, height: 22, borderRadius: 11, border: 'none', cursor: 'pointer',
+                background: lightMode ? '#3b82f6' : '#334155',
+                position: 'relative', transition: 'background 0.2s',
+              }}
+            >
+              <div style={{
+                position: 'absolute', top: 3, left: lightMode ? 21 : 3,
+                width: 16, height: 16, background: '#fff', borderRadius: '50%',
+                transition: 'left 0.2s',
+              }}></div>
+            </button>
+          </div>
+
+          <button onClick={() => setShowSettings(false)} style={{ marginTop: 14, width: '100%', padding: '7px', background: '#0f172a', border: '1px solid #334155', borderRadius: 8, color: '#64748b', fontSize: 12, cursor: 'pointer' }}>Close</button>
+        </div>
+      )}
+
       {/* Tax modal */}
       {showTax && <TaxCalc allData={allData} onClose={() => setShowTax(false)} />}
 
@@ -1449,7 +1864,31 @@ function App() {
 // ── Root ───────────────────────────────────────────────────────────────────
 function Root() {
   const [unlocked, setUnlocked] = useState(() => localStorage.getItem('ENJ_UNLOCKED') === 'true');
-  return unlocked ? <App /> : <Paywall onUnlock={() => setUnlocked(true)} />;
+  const [restored, setRestored] = useState(false);
+
+  function handleUnlock(isRestore) {
+    setUnlocked(true);
+    if (isRestore) {
+      setRestored(true);
+      setTimeout(() => setRestored(false), 4000);
+    }
+  }
+
+  return (
+    <div>
+      {unlocked ? <App /> : <Paywall onUnlock={handleUnlock} />}
+      {restored && (
+        <div style={{
+          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+          background: '#16a34a', color: '#fff', padding: '12px 24px', borderRadius: 12,
+          fontWeight: 700, fontSize: 14, zIndex: 9999, boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+          animation: 'none',
+        }}>
+          ✅ Welcome back! Access restored on this device.
+        </div>
+      )}
+    </div>
+  );
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(<Root />);
