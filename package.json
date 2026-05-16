@@ -3,6 +3,6 @@
   "version": "5.0.0",
   "description": "Nursing shift planner for Australian nurses — by Elite Nurse Jackie",
   "engines": {
-    "node": "18.x"
+    "node": "22.x"
   }
 }
