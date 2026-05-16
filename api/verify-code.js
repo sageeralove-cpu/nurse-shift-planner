@@ -1,12 +1,8 @@
 $ cat /Users/jackiedouma/nurse-shift-planner/api/verify-code.js
 
-// Verify an ENJ-XXXXXX access code and mark it used
-const { createClient } = require('@supabase/supabase-js');
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
+// Verify an ENJ-XXXXXX access code — uses native fetch, no npm packages needed
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -18,23 +14,33 @@ module.exports = async (req, res) => {
   try {
     const { code } = req.body || {};
     if (!code) return res.status(400).json({ valid: false, error: 'No code provided' });
-
     const clean = code.trim().toUpperCase();
 
-    const { data, error } = await supabase
-      .from('access_codes')
-      .select('*')
-      .eq('code', clean)
-      .single();
+    // Look up code in Supabase via REST API
+    const lookupRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/access_codes?code=eq.${encodeURIComponent(clean)}&select=*`,
+      { headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` } }
+    );
+    const rows = await lookupRes.json();
 
-    if (error || !data) return res.status(200).json({ valid: false, error: 'Code not found' });
-    if (data.used) return res.status(200).json({ valid: false, error: 'Code already used' });
+    if (!rows || rows.length === 0) return res.status(200).json({ valid: false, error: 'Code not found' });
+    const row = rows[0];
+    if (row.used) return res.status(200).json({ valid: false, error: 'Code already used' });
 
     // Mark as used
-    await supabase
-      .from('access_codes')
-      .update({ used: true, used_at: new Date().toISOString() })
-      .eq('code', clean);
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/access_codes?code=eq.${encodeURIComponent(clean)}`,
+      {
+        method: 'PATCH',
+        headers: {
+          apikey: SUPABASE_SERVICE_KEY,
+          Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=minimal'
+        },
+        body: JSON.stringify({ used: true, used_at: new Date().toISOString() })
+      }
+    );
 
     return res.status(200).json({ valid: true });
   } catch (err) {
