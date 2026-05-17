@@ -36,15 +36,30 @@ const { useState, useEffect, useCallback, useRef, useMemo } = React;
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const SHIFT_TYPES = [
-  { id: 'day',     label: 'Day',     emoji: '🌅', color: '#f59e0b' },
-  { id: 'evening', label: 'Evening', emoji: '🌆', color: '#8b5cf6' },
-  { id: 'night',   label: 'Night',   emoji: '🌙', color: '#1e40af' },
-  { id: 'oncall',  label: 'On Call',  emoji: '📟', color: '#0891b2' },
-  { id: 'overtime',label: 'Overtime', emoji: '⚡', color: '#f97316' },
-  { id: 'sick',    label: 'Sick Leave', emoji: '🤒', color: '#be123c' },
-  { id: 'rdo',     label: 'RDO',     emoji: '✅', color: '#16a34a' },
-  { id: 'leave',   label: 'Leave',   emoji: '🏖️', color: '#0284c7' },
-  { id: 'off',     label: 'Off',     emoji: '🏠', color: '#475569' },
+  { id: 'day',     label: 'Day',       emoji: '🌅', color: '#f59e0b' },
+  { id: 'evening', label: 'Evening',   emoji: '🌆', color: '#8b5cf6' },
+  { id: 'night',   label: 'Night',     emoji: '🌙', color: '#1e40af' },
+  { id: 'oncall',  label: 'On Call',   emoji: '📟', color: '#0891b2' },
+  { id: 'overtime',label: 'Overtime',  emoji: '⚡', color: '#f97316' },
+  { id: 'sick',    label: 'Sick Leave',emoji: '🤒', color: '#be123c' },
+  { id: 'ado',     label: 'ADO',       emoji: '📅', color: '#0d9488' },
+  { id: 'rdo',     label: 'RDO',       emoji: '✅', color: '#16a34a' },
+  { id: 'leave',   label: 'Leave',     emoji: '🏖️', color: '#0284c7' },
+  { id: 'off',     label: 'Off',       emoji: '🏠', color: '#475569' },
+];
+
+// ── Leave types matching Ramsay / standard AU nursing leave ───────────────
+const LEAVE_TYPES = [
+  { id: 'annual',    label: 'Annual Leave',          emoji: '🏖️', color: '#0284c7'  },
+  { id: 'sick',      label: 'Sick Leave',            emoji: '🤒', color: '#be123c'  },
+  { id: 'pubhol',    label: 'Public Holiday',        emoji: '🎉', color: '#ec4899'  },
+  { id: 'lsl',       label: 'Long Service Leave',    emoji: '🏆', color: '#f59e0b'  },
+  { id: 'rdo',       label: 'RDO',                   emoji: '✅', color: '#16a34a'  },
+  { id: 'ado',       label: 'ADO (Accrued Day Off)', emoji: '📅', color: '#0d9488'  },
+  { id: 'til',       label: 'Time in Lieu',          emoji: '⏱',  color: '#0891b2'  },
+  { id: 'extra',     label: 'Extra Leave',           emoji: '✨', color: '#8b5cf6'  },
+  { id: 'banked',    label: 'Banked Ordinary Hours', emoji: '🏦', color: '#6366f1'  },
+  { id: 'purchased', label: 'Purchased Leave',       emoji: '🛒', color: '#94a3b8'  },
 ];
 const SHIFT_MAP = Object.fromEntries(SHIFT_TYPES.map(s => [s.id, s]));
 
@@ -77,6 +92,7 @@ const STORAGE_KEY = 'nurseShiftData_v1';
 const TAX_KEY = 'nurseTaxSettings_v1';
 const RATES_KEY = 'ENJ_RATES';
 const LSL_KEY   = 'ENJ_LSL_DATA';
+const LEAVE_KEY = 'ENJ_LEAVE_DATA';
 
 // ── Australian Daylight Saving dates (first Sun in Oct = start, first Sun in Apr = end) ──
 // Only NSW, VIC, SA, TAS, ACT observe DST. QLD, WA, NT do not.
@@ -1533,6 +1549,204 @@ function Tooltip({ data, rect, colIndex }) {
   );
 }
 
+// ── Leave Balances Tracker ────────────────────────────────────────────────
+function LeaveTracker({ payRates, onClose }) {
+  const base = parseFloat(payRates.base) || 0;
+
+  const [leaveData, setLeaveData] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(LEAVE_KEY)) || {}; } catch { return {}; }
+  });
+  function saveLeave(d) { setLeaveData(d); localStorage.setItem(LEAVE_KEY, JSON.stringify(d)); }
+
+  const [expandedId, setExpandedId]   = useState(null);
+  const [addingFor,  setAddingFor]    = useState(null);
+  const [entryType,  setEntryType]    = useState('use');   // 'use' | 'accrual'
+  const [entryDate,  setEntryDate]    = useState('');
+  const [entryHours, setEntryHours]   = useState('');
+  const [entryNote,  setEntryNote]    = useState('');
+
+  function getTypeData(id) { return leaveData[id] || {}; }
+  function getBalance(id) {
+    const d = getTypeData(id);
+    const start = parseFloat(d.startBalance) || 0;
+    return start + (d.entries || []).reduce((s, e) =>
+      s + (e.type === 'accrual' ? (parseFloat(e.hours) || 0) : -(parseFloat(e.hours) || 0)), 0);
+  }
+
+  function updateStart(id, val) {
+    const d = getTypeData(id);
+    saveLeave({ ...leaveData, [id]: { ...d, startBalance: val } });
+  }
+
+  function addEntry(id) {
+    const hrs = parseFloat(entryHours);
+    if (!hrs || hrs <= 0) return;
+    const d = getTypeData(id);
+    const entry = { id: Date.now(), date: entryDate, hours: hrs, note: entryNote, type: entryType };
+    saveLeave({ ...leaveData, [id]: { ...d, entries: [...(d.entries || []), entry] } });
+    setEntryDate(''); setEntryHours(''); setEntryNote(''); setEntryType('use'); setAddingFor(null);
+  }
+
+  function removeEntry(leaveId, entryId) {
+    const d = getTypeData(leaveId);
+    saveLeave({ ...leaveData, [leaveId]: { ...d, entries: (d.entries || []).filter(e => e.id !== entryId) } });
+  }
+
+  const iStyle = { padding: '8px 10px', borderRadius: 8, background: '#1e293b', border: '1px solid #334155', color: '#f1f5f9', fontSize: 12, outline: 'none' };
+
+  const totalHrsValue = LEAVE_TYPES.reduce((s, lt) => s + Math.max(0, getBalance(lt.id)), 0);
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal-box" style={{ padding: 0 }}>
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px 24px 14px', borderBottom: '1px solid #334155', position: 'sticky', top: 0, background: '#1e293b', zIndex: 10, borderRadius: '16px 16px 0 0' }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 17, color: '#f1f5f9' }}>📋 Leave Balances</div>
+            <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+              Total positive balance: {totalHrsValue.toFixed(2)} hrs{base > 0 ? ` · ${formatMoney(totalHrsValue * base)}` : ''}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 24, cursor: 'pointer' }}>×</button>
+        </div>
+
+        {/* Note */}
+        <div style={{ padding: '10px 24px 0', fontSize: 11, color: '#475569', lineHeight: 1.5 }}>
+          Enter your current balances from your payslip or HR system. Then log hours used (−) or accrued (+) to track your running balance.
+        </div>
+
+        {/* Leave type rows */}
+        <div style={{ padding: '10px 16px 24px' }}>
+          {LEAVE_TYPES.map(lt => {
+            const balance    = getBalance(lt.id);
+            const d          = getTypeData(lt.id);
+            const entries    = d.entries || [];
+            const isExpanded = expandedId === lt.id;
+            const isAdding   = addingFor === lt.id;
+            const balColor   = balance < 0 ? '#f87171' : balance === 0 ? '#64748b' : '#34d399';
+
+            return (
+              <div key={lt.id} style={{ borderRadius: 10, border: `1px solid ${isExpanded ? lt.color + '55' : '#1e293b'}`, marginBottom: 6, overflow: 'hidden', background: '#0f172a' }}>
+                {/* Summary row */}
+                <div
+                  onClick={() => setExpandedId(isExpanded ? null : lt.id)}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', cursor: 'pointer', userSelect: 'none' }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: 18 }}>{lt.emoji}</span>
+                    <div>
+                      <div style={{ fontSize: 13, color: '#e2e8f0', fontWeight: 600 }}>{lt.label}</div>
+                      {entries.length > 0 && <div style={{ fontSize: 11, color: '#475569' }}>{entries.length} entr{entries.length === 1 ? 'y' : 'ies'} logged</div>}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: 14, color: balColor, fontWeight: 700 }}>{balance >= 0 ? '' : '−'}{Math.abs(balance).toFixed(2)} hrs</div>
+                      {base > 0 && balance !== 0 && <div style={{ fontSize: 11, color: '#475569' }}>{formatMoney(Math.abs(balance) * base)}</div>}
+                    </div>
+                    <span style={{ color: '#475569', fontSize: 12, transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s', display: 'inline-block' }}>▼</span>
+                  </div>
+                </div>
+
+                {/* Expanded panel */}
+                {isExpanded && (
+                  <div style={{ borderTop: '1px solid #1e293b', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+                    {/* Starting balance */}
+                    <div>
+                      <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>Starting Balance (from payslip / HR)</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <input type="number" step="0.001" value={d.startBalance || ''} onChange={e => updateStart(lt.id, e.target.value)}
+                          placeholder="e.g. 140.4"
+                          style={{ ...iStyle, flex: 1 }} />
+                        <span style={{ color: '#64748b', fontSize: 12, whiteSpace: 'nowrap' }}>hrs</span>
+                      </div>
+                      {lt.id === 'ado' && (
+                        <div style={{ fontSize: 11, color: '#0d9488', marginTop: 5, lineHeight: 1.5 }}>
+                          💡 ADO accrues when rostered — check your payslip for current banked hours. Each full day = 8 hrs. Use "+ Accrued" entries to log hours earned each fortnight.
+                        </div>
+                      )}
+                      {lt.id === 'banked' && (
+                        <div style={{ fontSize: 11, color: '#6366f1', marginTop: 5, lineHeight: 1.5 }}>
+                          💡 Banked Ordinary Hours accrue at 4 hrs per 80-hr fortnight at Ramsay. Use "+ Accrued" to log each fortnight's accrual.
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Entry log */}
+                    {entries.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>History</div>
+                        {entries.map(e => (
+                          <div key={e.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4, background: '#1e293b', borderRadius: 8, padding: '7px 10px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: e.type === 'accrual' ? '#34d399' : '#f87171', minWidth: 52 }}>
+                                {e.type === 'accrual' ? '+' : '−'}{e.hours.toFixed(2)} hrs
+                              </span>
+                              {e.date && <span style={{ fontSize: 11, color: '#64748b' }}>{e.date}</span>}
+                              {e.note && <span style={{ fontSize: 11, color: '#94a3b8' }}>· {e.note}</span>}
+                            </div>
+                            <button onClick={() => removeEntry(lt.id, e.id)} style={{ background: 'none', border: 'none', color: '#475569', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '0 4px' }}>×</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Add entry form */}
+                    {isAdding ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {/* Use / Accrual toggle */}
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          {[{ val: 'use', label: '− Used / Taken', col: '#f87171' }, { val: 'accrual', label: '+ Accrued', col: '#34d399' }].map(opt => (
+                            <button key={opt.val} onClick={() => setEntryType(opt.val)} className="btn"
+                              style={{ flex: 1, padding: '7px', fontSize: 12, background: entryType === opt.val ? '#1e293b' : '#0f172a', color: entryType === opt.val ? opt.col : '#475569', border: `1px solid ${entryType === opt.val ? opt.col : '#334155'}` }}>
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <input type="date" value={entryDate} onChange={e => setEntryDate(e.target.value)}
+                            style={{ ...iStyle, flex: 1 }} />
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <input type="number" step="0.25" value={entryHours} onChange={e => setEntryHours(e.target.value)} placeholder="hrs"
+                              style={{ ...iStyle, width: 70 }} />
+                            <span style={{ color: '#64748b', fontSize: 11 }}>hrs</span>
+                          </div>
+                        </div>
+                        <input value={entryNote} onChange={e => setEntryNote(e.target.value)} placeholder="Note (e.g. Annual leave week 1)"
+                          style={{ ...iStyle }} />
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button onClick={() => addEntry(lt.id)} className="btn"
+                            style={{ flex: 1, padding: '8px', background: entryType === 'accrual' ? '#052e16' : '#2d0a0a', color: entryType === 'accrual' ? '#34d399' : '#f87171', fontSize: 12, border: `1px solid ${entryType === 'accrual' ? '#16a34a' : '#7f1d1d'}` }}>
+                            {entryType === 'accrual' ? '+ Add Accrual' : '− Log Hours Used'}
+                          </button>
+                          <button onClick={() => { setAddingFor(null); setEntryDate(''); setEntryHours(''); setEntryNote(''); setEntryType('use'); }} className="btn"
+                            style={{ padding: '8px 14px', background: '#334155', color: '#94a3b8', fontSize: 12 }}>Cancel</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button onClick={() => { setAddingFor(lt.id); setExpandedId(lt.id); }} className="btn"
+                        style={{ width: '100%', padding: '8px', background: '#1e293b', color: lt.color, fontSize: 12, border: `1px dashed ${lt.color}55` }}>
+                        + Log Entry
+                      </button>
+                    )}
+
+                    {/* Balance summary at bottom of expanded */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#1e293b', borderRadius: 8, padding: '8px 12px' }}>
+                      <span style={{ fontSize: 12, color: '#64748b' }}>Current balance</span>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: balColor }}>{balance >= 0 ? '' : '−'}{Math.abs(balance).toFixed(2)} hrs{base > 0 ? ` · ${formatMoney(Math.abs(balance) * base)}` : ''}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Long Service Leave Calculator ─────────────────────────────────────────
 function LSLCalc({ payRates, holidayState, onClose }) {
   const base = parseFloat(payRates.base) || 0;
@@ -1748,6 +1962,7 @@ function App() {
   const [showTax, setShowTax] = useState(false);
   const [showICS, setShowICS] = useState(false);
   const [showLSL, setShowLSL] = useState(false);
+  const [showLeave, setShowLeave] = useState(false);
   const [tooltip, setTooltip] = useState(null); // {data, rect, col}
   const tooltipTimerRef = useRef(null);
   const [lightMode, setLightMode] = useState(() => localStorage.getItem('ENJ_LIGHT') === '1');
@@ -1829,7 +2044,7 @@ function App() {
       const y = d.getFullYear(), mo = d.getMonth(), day = d.getDate();
       const dk = dateKey(y, mo, day);
       const data = allData[dk];
-      if (!data?.shiftType || ['rdo','leave','off','sick'].includes(data.shiftType)) continue;
+      if (!data?.shiftType || ['rdo','ado','leave','off','sick'].includes(data.shiftType)) continue;
       const otHrs   = data.otChip && data.otChip !== 'None' ? parseDurChip(data.otChip) : 0;
       const regHrs  = parseFloat(data.duration) || 8.5;
       const totalHrs = regHrs + otHrs;
@@ -2029,6 +2244,7 @@ function App() {
           <button onClick={() => setShowSettings(s => !s)} className="btn" style={{ padding: '7px 12px', background: showSettings ? '#1e3a5f' : '#334155', color: showSettings ? '#60a5fa' : '#94a3b8', fontSize: 12 }}>⚙️ Settings</button>
           <button onClick={() => setShowTax(true)} className="btn" style={{ padding: '7px 12px', background: '#334155', color: '#94a3b8', fontSize: 12 }}>🧮 Tax Calc</button>
           <button onClick={() => setShowLSL(true)} className="btn" style={{ padding: '7px 12px', background: '#334155', color: '#94a3b8', fontSize: 12 }}>🏆 LSL</button>
+          <button onClick={() => setShowLeave(true)} className="btn" style={{ padding: '7px 12px', background: '#334155', color: '#94a3b8', fontSize: 12 }}>📋 Leave</button>
           <button onClick={() => setShowICS(true)} className="btn" style={{ padding: '7px 12px', background: '#334155', color: '#94a3b8', fontSize: 12 }}>📆 Sync Calendar</button>
           <button onClick={backup} className="btn" style={{ padding: '7px 12px', background: '#334155', color: '#94a3b8', fontSize: 12 }}>💾 Backup</button>
           <button onClick={load} className="btn" style={{ padding: '7px 12px', background: '#334155', color: '#94a3b8', fontSize: 12 }}>📂 Load</button>
@@ -2424,6 +2640,9 @@ function App() {
 
       {/* LSL modal */}
       {showLSL && <LSLCalc payRates={payRates} holidayState={holidayState} onClose={() => setShowLSL(false)} />}
+
+      {/* Leave Balances modal */}
+      {showLeave && <LeaveTracker payRates={payRates} onClose={() => setShowLeave(false)} />}
     </div>
   );
 }
