@@ -93,11 +93,17 @@ const RATES_KEY = 'ENJ_RATES';
 const LSL_KEY   = 'ENJ_LSL_DATA';
 const LEAVE_KEY = 'ENJ_LEAVE_DATA';
 
-// ── Cloud sync — pushes full user data to Supabase (debounce handled at call site) ──
-function ENJ_cloudSync() {
-  const sync_token = localStorage.getItem('ENJ_SYNC_TOKEN');
-  if (!sync_token) return;
-  const payload = {
+// ── Cloud sync — pushes full user data to Supabase ──────────────────────────
+// ENJ_syncStatus: 'idle' | 'syncing' | 'ok' | 'error'
+window._enjSyncStatus = 'idle';
+window._enjSyncListeners = [];
+function _enjNotify(s) {
+  window._enjSyncStatus = s;
+  window._enjSyncListeners.forEach(fn => fn(s));
+}
+
+function ENJ_buildPayload() {
+  return {
     _version: 2,
     shifts:      JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'),
     rates:       JSON.parse(localStorage.getItem(RATES_KEY)   || 'null'),
@@ -105,12 +111,31 @@ function ENJ_cloudSync() {
     leave:       JSON.parse(localStorage.getItem(LEAVE_KEY)   || 'null'),
     taxSettings: JSON.parse(localStorage.getItem(TAX_KEY)     || 'null'),
   };
+}
+
+function ENJ_cloudSync() {
+  const sync_token = localStorage.getItem('ENJ_SYNC_TOKEN');
+  if (!sync_token) return;
+  const body = JSON.stringify({ sync_token, shift_data: ENJ_buildPayload() });
+  _enjNotify('syncing');
   fetch('/api/save-shifts', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sync_token, shift_data: payload }),
-  }).catch(() => {}); // silent — never interrupt UX
+    body,
+  }).then(r => _enjNotify(r.ok ? 'ok' : 'error')).catch(() => _enjNotify('error'));
 }
+
+// Beacon sync — fires reliably even when the tab/browser is closing
+function ENJ_beaconSync() {
+  const sync_token = localStorage.getItem('ENJ_SYNC_TOKEN');
+  if (!sync_token) return;
+  const body = JSON.stringify({ sync_token, shift_data: ENJ_buildPayload() });
+  if (navigator.sendBeacon) {
+    navigator.sendBeacon('/api/save-shifts', new Blob([body], { type: 'application/json' }));
+  }
+}
+window.addEventListener('beforeunload', ENJ_beaconSync);
+window.addEventListener('pagehide',     ENJ_beaconSync); // iOS Safari uses pagehide not beforeunload
 
 // ── Australian Daylight Saving dates (first Sun in Oct = start, first Sun in Apr = end) ──
 // Only NSW, VIC, SA, TAS, ACT observe DST. QLD, WA, NT do not.
@@ -2312,6 +2337,11 @@ function App() {
   const [showHolidays, setShowHolidays] = useState(() => localStorage.getItem('ENJ_HOLIDAYS') !== '0');
   const [holidayState, setHolidayState] = useState(() => localStorage.getItem('ENJ_HOL_STATE') || 'NSW');
   const [showSettings, setShowSettings] = useState(false);
+  const [syncStatus, setSyncStatus] = useState('idle'); // 'idle'|'syncing'|'ok'|'error'
+  useEffect(() => {
+    window._enjSyncListeners.push(setSyncStatus);
+    return () => { window._enjSyncListeners = window._enjSyncListeners.filter(f => f !== setSyncStatus); };
+  }, []);
   const [payRates, setPayRates] = useState(() => {
     try { return JSON.parse(localStorage.getItem(RATES_KEY)) || {}; } catch { return {}; }
   });
@@ -2325,6 +2355,7 @@ function App() {
   function saveRates(r) {
     setPayRates(r);
     localStorage.setItem(RATES_KEY, JSON.stringify(r));
+    ENJ_cloudSync();
   }
 
   // Upcoming pay estimate — uses real pay cycle if configured, else next 14 days
@@ -2639,6 +2670,15 @@ function App() {
           <span style={{ fontSize: 20 }}>🏥</span>
           <span style={{ fontWeight: 800, fontSize: 16, color: '#f1f5f9' }}>Nurse Shift Planner</span>
           <span style={{ fontSize: 11, color: '#16a34a', background: '#052e16', borderRadius: 4, padding: '2px 6px', fontWeight: 700 }}>v5 ✓</span>
+          {localStorage.getItem('ENJ_SYNC_TOKEN') && (
+            <span title={syncStatus === 'ok' ? 'Data saved to cloud' : syncStatus === 'syncing' ? 'Saving...' : syncStatus === 'error' ? 'Sync failed — will retry' : 'Cloud sync active'}
+              style={{ fontSize: 11, borderRadius: 4, padding: '2px 7px', fontWeight: 700, transition: 'all 0.3s',
+                background: syncStatus === 'ok' ? '#052e16' : syncStatus === 'syncing' ? '#1e3a5f' : syncStatus === 'error' ? '#450a0a' : '#1e293b',
+                color:      syncStatus === 'ok' ? '#4ade80' : syncStatus === 'syncing' ? '#93c5fd' : syncStatus === 'error' ? '#f87171' : '#64748b',
+              }}>
+              {syncStatus === 'ok' ? '☁️ Saved' : syncStatus === 'syncing' ? '☁️ Saving…' : syncStatus === 'error' ? '☁️ Retry' : '☁️'}
+            </span>
+          )}
         </div>
         <div style={{ flex: 1 }}></div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
