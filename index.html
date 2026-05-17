@@ -40,6 +40,7 @@ const SHIFT_TYPES = [
   { id: 'evening', label: 'Evening', emoji: '🌆', color: '#8b5cf6' },
   { id: 'night',   label: 'Night',   emoji: '🌙', color: '#1e40af' },
   { id: 'oncall',  label: 'On Call', emoji: '📟', color: '#0891b2' },
+  { id: 'sick',    label: 'Sick Leave', emoji: '🤒', color: '#be123c' },
   { id: 'rdo',     label: 'RDO',     emoji: '✅', color: '#16a34a' },
   { id: 'leave',   label: 'Leave',   emoji: '🏖️', color: '#0284c7' },
   { id: 'off',     label: 'Off',     emoji: '🏠', color: '#475569' },
@@ -1540,7 +1541,7 @@ function App() {
       const y = d.getFullYear(), mo = d.getMonth(), day = d.getDate();
       const dk = dateKey(y, mo, day);
       const data = allData[dk];
-      if (!data?.shiftType || ['rdo','leave','off'].includes(data.shiftType)) continue;
+      if (!data?.shiftType || ['rdo','leave','off','sick'].includes(data.shiftType)) continue;
       const otHours = data.otChip ? parseFloat(data.otChip.replace('+','').replace('hr','')) || 0 : 0;
       const hours = (parseFloat(data.duration) || 8.5) + otHours;
       const dow = d.getDay(); // 0=Sun, 6=Sat
