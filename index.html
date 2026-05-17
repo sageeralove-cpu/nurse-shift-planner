@@ -1543,7 +1543,7 @@ function App() {
     localStorage.setItem(RATES_KEY, JSON.stringify(r));
   }
 
-  // Upcoming 14-day pay estimate (loading-based)
+  // Upcoming pay estimate — uses real pay cycle if configured, else next 14 days
   const upcomingPay = useMemo(() => {
     const base = parseFloat(payRates.base) || 0;
     if (!base) return null;
@@ -1557,10 +1557,41 @@ function App() {
     const inchargeAmt = parseFloat(payRates.incharge) || 0;
     const qualsRate   = parseFloat(payRates.quals)    || 0;
     const holidays = getHolidays(holidayState);
+
+    // Determine date range — real cycle or fallback 14 days
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let rangeStart, rangeEnd, payDay = null, usingCycle = false;
+
+    if (payRates.anchorPayDate && payRates.anchorPeriodStart) {
+      try {
+        const [apy, apm, apd] = payRates.anchorPayDate.split('-').map(Number);
+        const [spy, spm, spd] = payRates.anchorPeriodStart.split('-').map(Number);
+        const anchorPay   = new Date(apy, apm - 1, apd);
+        const anchorStart = new Date(spy, spm - 1, spd);
+        const offsetDays  = Math.round((anchorStart - anchorPay) / 86400000); // negative
+        // Find next pay day strictly after today
+        const diffDays = Math.round((today - anchorPay) / 86400000);
+        let fn = Math.ceil(diffDays / 14);
+        if (fn < 0) fn = 0;
+        let nextPay = new Date(apy, apm - 1, apd + fn * 14);
+        while (nextPay <= today) nextPay = new Date(nextPay.getFullYear(), nextPay.getMonth(), nextPay.getDate() + 14);
+        payDay = nextPay;
+        rangeStart = new Date(nextPay.getFullYear(), nextPay.getMonth(), nextPay.getDate() + offsetDays);
+        rangeEnd   = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), rangeStart.getDate() + 13);
+        usingCycle = true;
+      } catch(e) { /* fall through */ }
+    }
+
+    if (!usingCycle) {
+      rangeStart = new Date(today);
+      rangeEnd   = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 13);
+    }
+
+    // Sum shifts in range
     let gross = 0;
-    const now = new Date();
-    for (let i = 0; i < 14; i++) {
-      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i);
+    for (let i = 0; i <= 13; i++) {
+      const d = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), rangeStart.getDate() + i);
       const y = d.getFullYear(), mo = d.getMonth(), day = d.getDate();
       const dk = dateKey(y, mo, day);
       const data = allData[dk];
@@ -1586,11 +1617,16 @@ function App() {
       if (qualsRate) shiftPay += qualsRate * totalHrs;
       gross += shiftPay;
     }
-    if (gross === 0) return { gross: 0, net: 0, tax: 0, noShifts: true };
+
+    const fmtD = d => d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+    const periodLabel = `${fmtD(rangeStart)} – ${fmtD(rangeEnd)}`;
+    const payDayLabel = payDay ? fmtD(payDay) : null;
+
+    if (gross === 0) return { gross: 0, net: 0, tax: 0, noShifts: true, periodLabel, payDayLabel, usingCycle };
     const annualGross = gross * 26;
     const tr = calcTax(annualGross, { residency: 'resident', tfThreshold: true, helpDebt: false });
     const fortnightTax = tr.totalTax / 26;
-    return { gross, tax: fortnightTax, net: gross - fortnightTax, noShifts: false };
+    return { gross, tax: fortnightTax, net: gross - fortnightTax, noShifts: false, periodLabel, payDayLabel, usingCycle };
   }, [allData, payRates, showHolidays, holidayState]);
 
   useEffect(() => {
@@ -1911,12 +1947,35 @@ function App() {
               </div>
             ))}
 
-            {/* Upcoming fortnight estimate */}
+            {/* Pay cycle anchor */}
+            <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, margin: '10px 0 6px', textTransform: 'uppercase', letterSpacing: 0.5 }}>📅 Pay Cycle (optional)</div>
+            <div style={{ fontSize: 11, color: '#475569', marginBottom: 8, lineHeight: 1.5 }}>Enter a known pay date and the start of that pay period so the estimate uses your exact fortnightly cycle.</div>
+            {[
+              { key: 'anchorPayDate',    label: 'A known pay day' },
+              { key: 'anchorPeriodStart', label: 'Period start for that pay' },
+            ].map(({ key, label }) => (
+              <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <div style={{ fontSize: 12, color: '#94a3b8', flex: 1 }}>{label}</div>
+                <input type="date" value={payRates[key] || ''} onChange={e => saveRates({ ...payRates, [key]: e.target.value })}
+                  style={{ padding: '4px 6px', borderRadius: 6, background: '#0f172a', border: '1px solid #334155', color: '#e2e8f0', fontSize: 12, outline: 'none', width: 128 }} />
+              </div>
+            ))}
+
+            {/* Pay estimate */}
             {upcomingPay && (
               <div style={{ background: '#0f172a', borderRadius: 10, padding: '10px 12px', marginTop: 10, border: '1px solid #1e3a5f' }}>
-                <div style={{ fontSize: 11, color: '#64748b', marginBottom: 7, fontWeight: 600 }}>📅 NEXT 14 DAYS ESTIMATE</div>
+                <div style={{ fontSize: 11, color: '#64748b', marginBottom: 2, fontWeight: 600 }}>
+                  {upcomingPay.usingCycle ? '📅 UPCOMING PAY PERIOD' : '📅 NEXT 14 DAYS ESTIMATE'}
+                </div>
+                {upcomingPay.usingCycle && (
+                  <div style={{ marginBottom: 7 }}>
+                    <div style={{ fontSize: 12, color: '#60a5fa', fontWeight: 600 }}>{upcomingPay.periodLabel}</div>
+                    {upcomingPay.payDayLabel && <div style={{ fontSize: 11, color: '#64748b' }}>Pay day: {upcomingPay.payDayLabel}</div>}
+                  </div>
+                )}
+                {!upcomingPay.usingCycle && <div style={{ marginBottom: 7 }}><div style={{ fontSize: 12, color: '#60a5fa' }}>{upcomingPay.periodLabel}</div></div>}
                 {upcomingPay.noShifts ? (
-                  <div style={{ fontSize: 12, color: '#475569' }}>No shifts logged in next 14 days</div>
+                  <div style={{ fontSize: 12, color: '#475569' }}>No shifts logged for this period</div>
                 ) : (
                   <>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -1931,13 +1990,13 @@ function App() {
                       <span style={{ fontSize: 13, color: '#cbd5e1', fontWeight: 700 }}>Take-home</span>
                       <span style={{ fontSize: 13, color: '#34d399', fontWeight: 700 }}>{formatMoney(upcomingPay.net)}</span>
                     </div>
-                    <div style={{ fontSize: 10, color: '#475569', marginTop: 6 }}>Based on resident tax, tax-free threshold on. Open 🧮 Tax Calc for full breakdown.</div>
+                    <div style={{ fontSize: 10, color: '#475569', marginTop: 6 }}>Resident tax, tax-free threshold on. Open 🧮 Tax Calc for full breakdown.</div>
                   </>
                 )}
               </div>
             )}
             {!upcomingPay && (
-              <div style={{ fontSize: 11, color: '#475569', marginTop: 6 }}>Enter your base rate to see upcoming pay estimate.</div>
+              <div style={{ fontSize: 11, color: '#475569', marginTop: 6 }}>Enter your base rate above to see a pay estimate.</div>
             )}
           </div>
 
