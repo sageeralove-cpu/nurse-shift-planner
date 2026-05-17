@@ -2463,8 +2463,10 @@ function App() {
 
     if (gross === 0) return { gross: 0, net: 0, tax: 0, superAmt: 0, noShifts: true, periodLabel, payDayLabel, usingCycle, agencyMode, agABN, agSuper };
 
-    // Salary sacrifice (fortnightly)
-    const salSacFn = parseFloat(payRates.salSacFortnight) || 0;
+    // Salary sacrifice (fortnightly) — supports flat $ or % of gross
+    const salSacMode = payRates.salSacMode || 'flat';
+    const salSacRaw = parseFloat(payRates.salSacFortnight) || 0;
+    const salSacFn = salSacMode === 'pct' ? gross * salSacRaw / 100 : salSacRaw;
 
     // Tax (on salary-sacrifice-reduced income)
     let fortnightTax = 0;
@@ -2478,7 +2480,8 @@ function App() {
     // Super (agency mode shows separately)
     const superAmt = agencyMode ? gross * agSuper / 100 : 0;
 
-    return { gross, tax: fortnightTax, salSac: salSacFn, net: gross - fortnightTax - salSacFn, superAmt, noShifts: false, periodLabel, payDayLabel, usingCycle, agencyMode, agABN, agSuper };
+    const salSacPct = gross > 0 ? (salSacFn / gross) * 100 : 0;
+    return { gross, tax: fortnightTax, salSac: salSacFn, salSacPct, net: gross - fortnightTax - salSacFn, superAmt, noShifts: false, periodLabel, payDayLabel, usingCycle, agencyMode, agABN, agSuper };
   }, [allData, payRates, showHolidays, holidayState]);
 
   useEffect(() => {
@@ -2887,15 +2890,33 @@ function App() {
             ))}
 
             {/* Salary sacrifice */}
-            <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, margin: '10px 0 6px', textTransform: 'uppercase', letterSpacing: 0.5 }}>💜 Salary Sacrifice (optional)</div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-              <div style={{ fontSize: 12, color: '#94a3b8', flex: 1 }}>Per fortnight ($) <span style={{ color: '#475569', fontSize: 11 }}>— e.g. super, novated lease</span></div>
-              <div style={{ position: 'relative' }}>
-                <span style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: '#64748b', fontSize: 12 }}>$</span>
-                <input type="text" inputMode="decimal" value={payRates.salSacFortnight || ''} onChange={e => saveRates({ ...payRates, salSacFortnight: e.target.value })}
-                  placeholder="0"
-                  style={{ width: 90, padding: '5px 8px 5px 20px', borderRadius: 6, background: '#0f172a', border: '1px solid #334155', color: '#e2e8f0', fontSize: 13, outline: 'none' }} />
+            <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, margin: '10px 0 4px', textTransform: 'uppercase', letterSpacing: 0.5 }}>💜 Salary Sacrifice (optional)</div>
+            <div style={{ fontSize: 11, color: '#475569', marginBottom: 8 }}>e.g. extra super, novated lease — deducted from take-home</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              {/* Mode toggle */}
+              <div style={{ display: 'flex', background: '#0f172a', borderRadius: 6, border: '1px solid #334155', overflow: 'hidden', flexShrink: 0 }}>
+                {['flat','pct'].map(mode => (
+                  <button key={mode} onClick={() => saveRates({ ...payRates, salSacMode: mode })}
+                    style={{ padding: '5px 10px', fontSize: 11, fontWeight: 700, border: 'none', cursor: 'pointer',
+                      background: (payRates.salSacMode || 'flat') === mode ? '#1d4ed8' : 'transparent',
+                      color: (payRates.salSacMode || 'flat') === mode ? '#fff' : '#64748b' }}>
+                    {mode === 'flat' ? '$' : '%'}
+                  </button>
+                ))}
               </div>
+              {/* Input */}
+              <div style={{ position: 'relative', flex: 1 }}>
+                <span style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: '#64748b', fontSize: 12 }}>
+                  {(payRates.salSacMode || 'flat') === 'flat' ? '$' : '%'}
+                </span>
+                <input type="text" inputMode="decimal" value={payRates.salSacFortnight || ''}
+                  onChange={e => saveRates({ ...payRates, salSacFortnight: e.target.value })}
+                  placeholder={(payRates.salSacMode || 'flat') === 'pct' ? 'e.g. 5' : '0'}
+                  style={{ width: '100%', padding: '5px 8px 5px 22px', borderRadius: 6, background: '#0f172a', border: '1px solid #334155', color: '#e2e8f0', fontSize: 13, outline: 'none' }} />
+              </div>
+              <span style={{ fontSize: 11, color: '#475569', flexShrink: 0 }}>
+                {(payRates.salSacMode || 'flat') === 'flat' ? 'per fortnight' : 'of gross'}
+              </span>
             </div>
 
             {/* Pay cycle anchor */}
@@ -2950,7 +2971,7 @@ function App() {
                     )}
                     {upcomingPay.salSac > 0 && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                        <span style={{ fontSize: 12, color: '#94a3b8' }}>Salary sacrifice</span>
+                        <span style={{ fontSize: 12, color: '#94a3b8' }}>Salary sacrifice{upcomingPay.salSacPct > 0 ? ` (${upcomingPay.salSacPct.toFixed(1)}%)` : ''}</span>
                         <span style={{ fontSize: 12, color: '#a78bfa' }}>−{formatMoney(upcomingPay.salSac)}</span>
                       </div>
                     )}
