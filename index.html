@@ -296,7 +296,7 @@ function calcTax(gross, settings) {
   let medicare = 0;
 
   if (residency === 'resident') {
-    // ATO 2024-25 brackets
+    // ATO FY 2025-26 brackets (Stage 3 cuts, unchanged from 2024-25)
     if (gross <= 18200) tax = 0;
     else if (gross <= 45000) tax = (gross - 18200) * 0.19;
     else if (gross <= 120000) tax = 5092 + (gross - 45000) * 0.325;
@@ -308,12 +308,11 @@ function calcTax(gross, settings) {
       if (gross <= 18200) tax = gross * 0.19;
     }
 
-    // LITO
+    // LITO — ATO FY 2025-26: $700 offset, tapers to $0 at $66,667
     if (gross <= 37500) lito = 700;
-    else if (gross <= 45000) lito = 700 - (gross - 37500) * (700 / 7500);
-    else if (gross <= 66667) lito = lito = Math.max(0, (700 - (gross - 37500) * (700/7500)) - (gross - 45000) * (1500/21667));
+    else if (gross <= 45000) lito = 700 - (gross - 37500) * 0.05;      // reduces 5c per $1
+    else if (gross <= 66667) lito = Math.max(0, 325 - (gross - 45000) * 0.015); // reduces 1.5c per $1
     else lito = 0;
-    lito = Math.max(0, lito);
 
     medicare = gross * 0.02;
   } else if (residency === 'nonresident') {
