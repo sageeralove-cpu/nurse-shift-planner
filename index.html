@@ -407,6 +407,7 @@ function Paywall({ onUnlock }) {
   const [pinError, setPinError] = useState('');
   const [pendingSyncToken, setPendingSyncToken] = useState('');
   const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [showNoPinMsg, setShowNoPinMsg] = useState(false);
   const codeInputRef = useRef(null);
 
 
@@ -674,6 +675,28 @@ function Paywall({ onUnlock }) {
                 {loading ? 'Checking…' : 'Unlock Access'}
               </button>
             </form>
+
+            {/* PIN shortcut */}
+            <div style={{ marginTop: 14, textAlign: 'center' }}>
+              <button onClick={() => {
+                if (localStorage.getItem(PIN_KEY)) {
+                  setShowNoPinMsg(false);
+                  setView('pin-enter');
+                } else {
+                  setShowNoPinMsg(v => !v);
+                }
+              }} style={{ background: 'none', border: 'none', color: '#60a5fa', fontSize: 13, fontWeight: 600, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+                🔐 Already have a PIN?
+              </button>
+              {showNoPinMsg && (
+                <div style={{ marginTop: 8, background: '#1e293b', border: '1px solid #334155', borderRadius: 10, padding: '12px 14px', textAlign: 'left' }}>
+                  <div style={{ fontSize: 13, color: '#f1f5f9', fontWeight: 600, marginBottom: 4 }}>No PIN found on this device</div>
+                  <div style={{ fontSize: 12, color: '#94a3b8', lineHeight: 1.6 }}>
+                    PINs are saved to each browser/device separately. To restore your data and set up a PIN here, enter your Ko-fi code above — your shifts, pay rates and settings will all be restored automatically ☁️
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
