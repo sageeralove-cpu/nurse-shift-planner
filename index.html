@@ -2463,18 +2463,22 @@ function App() {
 
     if (gross === 0) return { gross: 0, net: 0, tax: 0, superAmt: 0, noShifts: true, periodLabel, payDayLabel, usingCycle, agencyMode, agABN, agSuper };
 
-    // Tax
+    // Salary sacrifice (fortnightly)
+    const salSacFn = parseFloat(payRates.salSacFortnight) || 0;
+
+    // Tax (on salary-sacrifice-reduced income)
     let fortnightTax = 0;
     if (!agABN) {
       const annualGross = gross * 26;
-      const tr = calcTax(annualGross, { residency: 'resident', tfThreshold: true, helpDebt: false });
+      const annualTaxable = Math.max(0, annualGross - salSacFn * 26);
+      const tr = calcTax(annualTaxable, { residency: 'resident', tfThreshold: true, helpDebt: false });
       fortnightTax = tr.totalTax / 26;
     }
 
     // Super (agency mode shows separately)
     const superAmt = agencyMode ? gross * agSuper / 100 : 0;
 
-    return { gross, tax: fortnightTax, net: gross - fortnightTax, superAmt, noShifts: false, periodLabel, payDayLabel, usingCycle, agencyMode, agABN, agSuper };
+    return { gross, tax: fortnightTax, salSac: salSacFn, net: gross - fortnightTax - salSacFn, superAmt, noShifts: false, periodLabel, payDayLabel, usingCycle, agencyMode, agABN, agSuper };
   }, [allData, payRates, showHolidays, holidayState]);
 
   useEffect(() => {
@@ -2882,6 +2886,18 @@ function App() {
               </div>
             ))}
 
+            {/* Salary sacrifice */}
+            <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, margin: '10px 0 6px', textTransform: 'uppercase', letterSpacing: 0.5 }}>💜 Salary Sacrifice (optional)</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <div style={{ fontSize: 12, color: '#94a3b8', flex: 1 }}>Per fortnight ($) <span style={{ color: '#475569', fontSize: 11 }}>— e.g. super, novated lease</span></div>
+              <div style={{ position: 'relative' }}>
+                <span style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: '#64748b', fontSize: 12 }}>$</span>
+                <input type="text" inputMode="decimal" value={payRates.salSacFortnight || ''} onChange={e => saveRates({ ...payRates, salSacFortnight: e.target.value })}
+                  placeholder="0"
+                  style={{ width: 90, padding: '5px 8px 5px 20px', borderRadius: 6, background: '#0f172a', border: '1px solid #334155', color: '#e2e8f0', fontSize: 13, outline: 'none' }} />
+              </div>
+            </div>
+
             {/* Pay cycle anchor */}
             <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, margin: '10px 0 6px', textTransform: 'uppercase', letterSpacing: 0.5 }}>📅 Pay Cycle (optional)</div>
             <div style={{ fontSize: 11, color: '#475569', marginBottom: 8, lineHeight: 1.5 }}>Enter a known pay date and the start of that pay period so the estimate uses your exact fortnightly cycle.</div>
@@ -2930,6 +2946,12 @@ function App() {
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                         <span style={{ fontSize: 12, color: '#94a3b8' }}>Est. tax withheld</span>
                         <span style={{ fontSize: 12, color: '#f87171' }}>−{formatMoney(upcomingPay.tax)}</span>
+                      </div>
+                    )}
+                    {upcomingPay.salSac > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <span style={{ fontSize: 12, color: '#94a3b8' }}>Salary sacrifice</span>
+                        <span style={{ fontSize: 12, color: '#a78bfa' }}>−{formatMoney(upcomingPay.salSac)}</span>
                       </div>
                     )}
                     <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #1e3a5f', paddingTop: 6, marginTop: 2 }}>
