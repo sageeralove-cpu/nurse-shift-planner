@@ -54,8 +54,7 @@ const LEAVE_TYPES = [
   { id: 'sick',      label: 'Sick Leave',            emoji: '🤒', color: '#be123c'  },
   { id: 'pubhol',    label: 'Public Holiday',        emoji: '🎉', color: '#ec4899'  },
   { id: 'lsl',       label: 'Long Service Leave',    emoji: '🏆', color: '#f59e0b'  },
-  { id: 'rdo',       label: 'RDO',                   emoji: '✅', color: '#16a34a'  },
-  { id: 'ado',       label: 'ADO (Accrued Day Off)', emoji: '📅', color: '#0d9488'  },
+  { id: 'ado',       label: 'ADO (Allocated Day Off)', emoji: '📅', color: '#0d9488'  },
   { id: 'til',       label: 'Time in Lieu',          emoji: '⏱',  color: '#0891b2'  },
   { id: 'extra',     label: 'Extra Leave',           emoji: '✨', color: '#8b5cf6'  },
   { id: 'banked',    label: 'Banked Ordinary Hours', emoji: '🏦', color: '#6366f1'  },
@@ -2565,16 +2564,16 @@ function App() {
           {/* Scrollable body */}
           <div style={{ overflowY: 'auto', padding: '14px 18px 18px', flex: 1 }}>
 
-          {/* Backup reminder */}
-          <div style={{ background: '#451a03', border: '1px solid #92400e', borderRadius: 10, padding: '11px 14px', marginBottom: 16, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-            <div style={{ fontSize: 18, lineHeight: 1, flexShrink: 0 }}>⚠️</div>
+          {/* Auto-save + backup notice */}
+          <div style={{ background: '#0c2340', border: '1px solid #1e40af', borderRadius: 10, padding: '11px 14px', marginBottom: 16, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+            <div style={{ fontSize: 18, lineHeight: 1, flexShrink: 0 }}>💾</div>
             <div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: '#fbbf24', marginBottom: 4 }}>Back up before switching devices or browsers</div>
-              <div style={{ fontSize: 12, color: '#fcd34d', lineHeight: 1.5 }}>
-                Your shifts, rates and leave data are stored locally on this device. Clearing your browser, switching to a new phone, or using a different browser will erase your data.
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#60a5fa', marginBottom: 4 }}>Auto-save is on — no manual saves needed</div>
+              <div style={{ fontSize: 12, color: '#93c5fd', lineHeight: 1.5 }}>
+                All your shifts, pay rates, leave balances and LSL data save automatically to this device as you go.
               </div>
-              <div style={{ fontSize: 12, color: '#fcd34d', marginTop: 6, lineHeight: 1.5 }}>
-                Use <strong style={{ color: '#fbbf24' }}>💾 Backup</strong> (top bar) to save a file you can reload anytime. Your Ko-fi code + PIN will restore app access on a new device, but your data file is separate.
+              <div style={{ fontSize: 12, color: '#93c5fd', marginTop: 6, lineHeight: 1.5 }}>
+                <strong style={{ color: '#60a5fa' }}>Switching phones or browsers?</strong> Use <strong style={{ color: '#60a5fa' }}>💾 Backup</strong> (top bar) to export a file and <strong style={{ color: '#60a5fa' }}>📂 Load</strong> to restore it. Your Ko-fi code + PIN re-unlocks the app, but your data needs the backup file.
               </div>
             </div>
           </div>
