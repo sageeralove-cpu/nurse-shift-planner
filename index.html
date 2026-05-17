@@ -1272,9 +1272,11 @@ function TaxCalc({ allData, onClose }) {
     { range: '$180,001+', rate: '45c/$1 over $180,000', lower: 180001, upper: Infinity },
   ];
 
-  function saveSettings(s) {
+  function saveSettings(s, newPriorIncome, newPriorWithheld) {
+    const pi = newPriorIncome !== undefined ? newPriorIncome : priorIncome;
+    const pw = newPriorWithheld !== undefined ? newPriorWithheld : priorWithheld;
     setSettings(s);
-    localStorage.setItem(TAX_KEY, JSON.stringify({ ...s, priorIncome, priorWithheld }));
+    localStorage.setItem(TAX_KEY, JSON.stringify({ ...s, priorIncome: pi, priorWithheld: pw }));
     ENJ_cloudSync();
   }
 
@@ -1330,13 +1332,13 @@ function TaxCalc({ allData, onClose }) {
               )}
               <div style={{ marginBottom: 10 }}>
                 <label style={{ fontSize: 12, color: '#64748b', display: 'block', marginBottom: 5 }}>Prior FY income (gross $)</label>
-                <input type="number" value={priorIncome} onChange={e => { setPriorIncome(e.target.value); saveSettings({ ...settings }); }}
+                <input type="number" value={priorIncome} onChange={e => { const v = e.target.value; setPriorIncome(v); saveSettings({ ...settings }, v, priorWithheld); }}
                   placeholder="0"
                   style={{ width: '100%', padding: '9px 12px', borderRadius: 8, background: '#1e293b', border: '1px solid #334155', color: '#f1f5f9', fontSize: 13, outline: 'none' }} />
               </div>
               <div style={{ marginBottom: 10 }}>
                 <label style={{ fontSize: 12, color: '#64748b', display: 'block', marginBottom: 5 }}>Tax already withheld ($)</label>
-                <input type="number" value={priorWithheld} onChange={e => { setPriorWithheld(e.target.value); saveSettings({ ...settings }); }}
+                <input type="number" value={priorWithheld} onChange={e => { const v = e.target.value; setPriorWithheld(v); saveSettings({ ...settings }, priorIncome, v); }}
                   placeholder="0"
                   style={{ width: '100%', padding: '9px 12px', borderRadius: 8, background: '#1e293b', border: '1px solid #334155', color: '#f1f5f9', fontSize: 13, outline: 'none' }} />
               </div>
