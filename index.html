@@ -93,6 +93,25 @@ const RATES_KEY = 'ENJ_RATES';
 const LSL_KEY   = 'ENJ_LSL_DATA';
 const LEAVE_KEY = 'ENJ_LEAVE_DATA';
 
+// ── Cloud sync — pushes full user data to Supabase (debounce handled at call site) ──
+function ENJ_cloudSync() {
+  const sync_token = localStorage.getItem('ENJ_SYNC_TOKEN');
+  if (!sync_token) return;
+  const payload = {
+    _version: 2,
+    shifts:      JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'),
+    rates:       JSON.parse(localStorage.getItem(RATES_KEY)   || 'null'),
+    lsl:         JSON.parse(localStorage.getItem(LSL_KEY)     || 'null'),
+    leave:       JSON.parse(localStorage.getItem(LEAVE_KEY)   || 'null'),
+    taxSettings: JSON.parse(localStorage.getItem(TAX_KEY)     || 'null'),
+  };
+  fetch('/api/save-shifts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sync_token, shift_data: payload }),
+  }).catch(() => {}); // silent — never interrupt UX
+}
+
 // ── Australian Daylight Saving dates (first Sun in Oct = start, first Sun in Apr = end) ──
 // Only NSW, VIC, SA, TAS, ACT observe DST. QLD, WA, NT do not.
 const DST_STATES = ['NSW','VIC','SA','TAS','ACT'];
@@ -482,6 +501,20 @@ function Paywall({ onUnlock }) {
       const data = await res.json();
       if (data.valid) {
         if (data.sync_token) localStorage.setItem('ENJ_SYNC_TOKEN', data.sync_token);
+        // Restore all cloud data to localStorage — App will pick it up fresh on mount
+        const ud = data.user_data;
+        if (ud && typeof ud === 'object') {
+          if (ud._version === 2) {
+            if (ud.shifts)      localStorage.setItem(STORAGE_KEY, JSON.stringify(ud.shifts));
+            if (ud.rates)       localStorage.setItem(RATES_KEY,   JSON.stringify(ud.rates));
+            if (ud.lsl)         localStorage.setItem(LSL_KEY,     JSON.stringify(ud.lsl));
+            if (ud.leave)       localStorage.setItem(LEAVE_KEY,   JSON.stringify(ud.leave));
+            if (ud.taxSettings) localStorage.setItem(TAX_KEY,     JSON.stringify(ud.taxSettings));
+          } else {
+            // Legacy v1 — just shifts
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(ud));
+          }
+        }
         setPendingSyncToken(data.sync_token || '');
         setView('pin-setup'); // offer PIN after first unlock
       } else {
@@ -1212,6 +1245,7 @@ function TaxCalc({ allData, onClose }) {
   function saveSettings(s) {
     setSettings(s);
     localStorage.setItem(TAX_KEY, JSON.stringify({ ...s, priorIncome, priorWithheld }));
+    ENJ_cloudSync();
   }
 
   return (
@@ -1747,7 +1781,7 @@ function LeaveTracker({ payRates, onClose }) {
   const [leaveData, setLeaveData] = useState(() => {
     try { return JSON.parse(localStorage.getItem(LEAVE_KEY)) || {}; } catch { return {}; }
   });
-  function saveLeave(d) { setLeaveData(d); localStorage.setItem(LEAVE_KEY, JSON.stringify(d)); }
+  function saveLeave(d) { setLeaveData(d); localStorage.setItem(LEAVE_KEY, JSON.stringify(d)); ENJ_cloudSync(); }
 
   const [expandedId, setExpandedId]   = useState(null);
   const [addingFor,  setAddingFor]    = useState(null);
@@ -1959,7 +1993,7 @@ function LSLCalc({ payRates, holidayState, onClose }) {
   const [lslData, setLslData] = useState(() => {
     try { return JSON.parse(localStorage.getItem(LSL_KEY)) || {}; } catch { return {}; }
   });
-  function saveLsl(d) { setLslData(d); localStorage.setItem(LSL_KEY, JSON.stringify(d)); }
+  function saveLsl(d) { setLslData(d); localStorage.setItem(LSL_KEY, JSON.stringify(d)); ENJ_cloudSync(); }
 
   const startDate    = lslData.startDate    || '';
   const loggedHours  = lslData.loggedHours  || ''; // employer-confirmed available hours
@@ -2325,19 +2359,19 @@ function App() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(allData));
   }, [allData]);
 
-  // Auto-save shifts to Supabase for live calendar sync (debounced 4s)
+  // Auto-sync ALL data to Supabase on shift changes (debounced 4s)
   useEffect(() => {
-    const sync_token = localStorage.getItem('ENJ_SYNC_TOKEN');
-    if (!sync_token) return;
-    const timer = setTimeout(() => {
-      fetch('/api/save-shifts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sync_token, shift_data: allData }),
-      }).catch(() => {}); // silent — don't disrupt UX if save fails
-    }, 4000);
+    if (!localStorage.getItem('ENJ_SYNC_TOKEN')) return;
+    const timer = setTimeout(() => ENJ_cloudSync(), 4000);
     return () => clearTimeout(timer);
   }, [allData]);
+
+  // Also sync when pay rates change (debounced 3s)
+  useEffect(() => {
+    if (!localStorage.getItem('ENJ_SYNC_TOKEN')) return;
+    const timer = setTimeout(() => ENJ_cloudSync(), 3000);
+    return () => clearTimeout(timer);
+  }, [payRates]);
 
   const today = new Date();
   const firstDay = new Date(currentYear, currentMonth, 1);

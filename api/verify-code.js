@@ -51,7 +51,8 @@ module.exports = async (req, res) => {
       );
     }
 
-    return res.status(200).json({ valid: true, sync_token, restored });
+    // Return stored user_data so new devices can restore all data automatically
+    return res.status(200).json({ valid: true, sync_token, restored, user_data: row.shift_data || null });
   } catch (err) {
     console.error('verify-code error:', err);
     return res.status(500).json({ valid: false, error: err.message });
