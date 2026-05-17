@@ -1238,6 +1238,7 @@ function TaxCalc({ allData, onClose }) {
   const [priorWithheld, setPriorWithheld] = useState(settings.priorWithheld || '');
   const [grossOverride, setGrossOverride] = useState(settings.grossOverride || '');
   const [editingGross, setEditingGross] = useState(false);
+  const [salarySacrifice, setSalarySacrifice] = useState(settings.salarySacrifice || '');
 
   const residency = settings.residency || 'resident';
   const tfThreshold = settings.tfThreshold !== false;
@@ -1260,8 +1261,10 @@ function TaxCalc({ allData, onClose }) {
   const totalFYFromApp = fyPay + fyExtPay;
   const prior = parseFloat(priorIncome) || 0;
   const annualGross = grossOverride !== '' ? (parseFloat(grossOverride) || 0) : prior + totalFYFromApp;
+  const salSac = parseFloat(salarySacrifice) || 0;
+  const taxableIncome = Math.max(0, annualGross - salSac);
 
-  const taxResult = calcTax(annualGross, { residency, tfThreshold, helpDebt });
+  const taxResult = calcTax(taxableIncome, { residency, tfThreshold, helpDebt });
   const withheld = parseFloat(priorWithheld) || 0;
   const refundOrOwing = withheld - taxResult.totalTax;
 
@@ -1273,12 +1276,13 @@ function TaxCalc({ allData, onClose }) {
     { range: '$180,001+', rate: '45c/$1 over $180,000', lower: 180001, upper: Infinity },
   ];
 
-  function saveSettings(s, newPriorIncome, newPriorWithheld, newGrossOverride) {
+  function saveSettings(s, newPriorIncome, newPriorWithheld, newGrossOverride, newSalSac) {
     const pi = newPriorIncome !== undefined ? newPriorIncome : priorIncome;
     const pw = newPriorWithheld !== undefined ? newPriorWithheld : priorWithheld;
     const go = newGrossOverride !== undefined ? newGrossOverride : grossOverride;
+    const ss = newSalSac !== undefined ? newSalSac : salarySacrifice;
     setSettings(s);
-    localStorage.setItem(TAX_KEY, JSON.stringify({ ...s, priorIncome: pi, priorWithheld: pw, grossOverride: go }));
+    localStorage.setItem(TAX_KEY, JSON.stringify({ ...s, priorIncome: pi, priorWithheld: pw, grossOverride: go, salarySacrifice: ss }));
     ENJ_cloudSync();
   }
 
@@ -1341,6 +1345,12 @@ function TaxCalc({ allData, onClose }) {
               <div style={{ marginBottom: 10 }}>
                 <label style={{ fontSize: 12, color: '#64748b', display: 'block', marginBottom: 5 }}>Tax already withheld ($)</label>
                 <input type="text" inputMode="decimal" value={priorWithheld} onChange={e => { const v = e.target.value; setPriorWithheld(v); saveSettings({ ...settings }, priorIncome, v); }}
+                  placeholder="0"
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: 8, background: '#1e293b', border: '1px solid #334155', color: '#f1f5f9', fontSize: 13, outline: 'none' }} />
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 12, color: '#64748b', display: 'block', marginBottom: 5 }}>Salary Sacrifice YTD ($) <span style={{ color: '#475569', fontSize: 11 }}>— reduces taxable income</span></label>
+                <input type="text" inputMode="decimal" value={salarySacrifice} onChange={e => { const v = e.target.value; setSalarySacrifice(v); saveSettings({ ...settings }, undefined, undefined, undefined, v); }}
                   placeholder="0"
                   style={{ width: '100%', padding: '9px 12px', borderRadius: 8, background: '#1e293b', border: '1px solid #334155', color: '#f1f5f9', fontSize: 13, outline: 'none' }} />
               </div>
@@ -1407,6 +1417,18 @@ function TaxCalc({ allData, onClose }) {
               <div style={{ fontSize: 11, color: '#64748b', padding: '4px 0 2px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span>Auto-calculated: {formatMoney(prior + totalFYFromApp)}</span>
                 <button onClick={() => { setGrossOverride(''); saveSettings({ ...settings }, undefined, undefined, ''); }} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: 11, cursor: 'pointer', padding: 0 }}>✕ clear override</button>
+              </div>
+            )}
+            {salSac > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid #1e293b', fontSize: 12 }}>
+                <span style={{ color: '#64748b' }}>− Salary Sacrifice</span>
+                <span style={{ color: '#64748b' }}>−{formatMoney(salSac)}</span>
+              </div>
+            )}
+            {salSac > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid #1e293b', fontSize: 13 }}>
+                <span style={{ color: '#94a3b8', fontWeight: 600 }}>Taxable Income</span>
+                <span style={{ color: '#f1f5f9', fontWeight: 700 }}>{formatMoney(taxableIncome)}</span>
               </div>
             )}
             {[
