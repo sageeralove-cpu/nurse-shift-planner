@@ -93,6 +93,45 @@ const RATES_KEY = 'ENJ_RATES';
 const LSL_KEY   = 'ENJ_LSL_DATA';
 const LEAVE_KEY = 'ENJ_LEAVE_DATA';
 
+// ── Leave balance helpers (used by ShiftModal to deduct/restore hours) ────────
+const LEAVE_DEDUCT_TYPES = [
+  { id: 'annual',  label: 'Annual Leave',          emoji: '🏖️' },
+  { id: 'sick',    label: 'Sick / Personal Leave',  emoji: '🤒' },
+  { id: 'lsl',     label: 'Long Service Leave',     emoji: '🏆' },
+  { id: 'ado',     label: 'ADO Bank',               emoji: '📅' },
+  { id: 'til',     label: 'Time in Lieu',           emoji: '⏱' },
+  { id: 'extra',   label: 'Extra Leave',            emoji: '✨' },
+  { id: 'pubhol',  label: 'Public Holiday',         emoji: '🎉' },
+];
+const SHIFT_TO_LEAVE_DEFAULT = { sick: 'sick', leave: 'annual', ado: 'ado' };
+
+function leaveGetAll() {
+  try { return JSON.parse(localStorage.getItem(LEAVE_KEY)) || {}; } catch { return {}; }
+}
+function leaveGetBalance(ld, id) {
+  const d = ld[id] || {};
+  const start = parseFloat(d.startBalance) || 0;
+  return start + (d.entries || []).reduce((s, e) =>
+    s + (e.type === 'accrual' ? (parseFloat(e.hours) || 0) : -(parseFloat(e.hours) || 0)), 0);
+}
+function leaveAddAutoEntry(dateStr, leaveTypeId, hours, shiftLabel) {
+  const ld = leaveGetAll();
+  const d  = ld[leaveTypeId] || {};
+  const entryId = `shift_${dateStr}`;
+  const filtered = (d.entries || []).filter(e => e.id !== entryId);
+  const newEntry = { id: entryId, date: dateStr, hours, note: `Auto: ${shiftLabel}`, type: 'use', auto: true };
+  localStorage.setItem(LEAVE_KEY, JSON.stringify({ ...ld, [leaveTypeId]: { ...d, entries: [...filtered, newEntry] } }));
+}
+function leaveRemoveAutoEntry(dateStr) {
+  const ld = leaveGetAll();
+  const entryId = `shift_${dateStr}`;
+  const updated = {};
+  for (const [k, v] of Object.entries(ld)) {
+    updated[k] = { ...v, entries: (v.entries || []).filter(e => e.id !== entryId) };
+  }
+  localStorage.setItem(LEAVE_KEY, JSON.stringify(updated));
+}
+
 // ── Cloud sync — pushes full user data to Supabase ──────────────────────────
 // ENJ_syncStatus: 'idle' | 'syncing' | 'ok' | 'error'
 window._enjSyncStatus = 'idle';
@@ -779,6 +818,8 @@ function ShiftModal({ dateStr, data, allData, onSave, onClose, agencyMode }) {
   const [extPayType, setExtPayType] = useState(existing.extPayType || 'payg');
   const [inCharge, setInCharge] = useState(existing.inCharge || false);
   const [agencyClient, setAgencyClient] = useState(existing.agencyClient || '');
+  const [leaveDeductType, setLeaveDeductType] = useState(existing.leaveDeductType || '');
+  const [leaveBalances, setLeaveBalances] = useState(() => leaveGetAll());
   const [confirmClear, setConfirmClear] = useState(false);
   const [actPreset, setActPreset] = useState(null);
   const [actDur, setActDur] = useState('');
@@ -786,6 +827,17 @@ function ShiftModal({ dateStr, data, allData, onSave, onClose, agencyMode }) {
   const [actCustomText, setActCustomText] = useState('');
 
   const hasData = existing.shiftType || existing.isPayday || (existing.activities || []).length > 0;
+  const isLeaveShift = ['sick', 'leave', 'ado'].includes(shiftType);
+
+  function handleShiftTypeChange(type) {
+    setShiftType(type);
+    if (SHIFT_TO_LEAVE_DEFAULT[type] && !leaveDeductType) {
+      setLeaveDeductType(SHIFT_TO_LEAVE_DEFAULT[type]);
+    } else if (!SHIFT_TO_LEAVE_DEFAULT[type]) {
+      setLeaveDeductType('');
+    }
+    setLeaveBalances(leaveGetAll()); // refresh balances
+  }
 
   const startOptions = duration === '8.5' ? START_TIMES_8_5 : duration === '12.5' ? START_TIMES_12_5 : [];
   const endTime = startTime && duration ? calcEndTime(startTime, parseFloat(duration)) : '';
@@ -813,7 +865,7 @@ function ShiftModal({ dateStr, data, allData, onSave, onClose, agencyMode }) {
       shiftType, duration, startTime, otChip, otPosition,
       isPayday, payAmount, isFortnightly, regularAmount,
       activities, externalWork, workplace, extHours, extPay, extPayType,
-      inCharge, agencyClient,
+      inCharge, agencyClient, leaveDeductType: isLeaveShift ? leaveDeductType : '',
     };
     const newAll = { ...allData };
     newAll[dateStr] = dayData;
@@ -827,6 +879,19 @@ function ShiftModal({ dateStr, data, allData, onSave, onClose, agencyMode }) {
         }
       });
     }
+
+    // ── Auto-deduct from leave balance ────────────────────────────────────────
+    if (isLeaveShift && leaveDeductType) {
+      const hrs = parseFloat(duration) || 8;
+      const shiftLabel = SHIFT_TYPES.find(s => s.id === shiftType)?.label || shiftType;
+      leaveAddAutoEntry(dateStr, leaveDeductType, hrs, shiftLabel);
+      ENJ_cloudSync();
+    } else if (!isLeaveShift && existing.leaveDeductType) {
+      // Switched from leave to worked shift — remove old deduction
+      leaveRemoveAutoEntry(dateStr);
+      ENJ_cloudSync();
+    }
+
     onSave(newAll);
   }
 
@@ -834,6 +899,11 @@ function ShiftModal({ dateStr, data, allData, onSave, onClose, agencyMode }) {
     if (!confirmClear) { setConfirmClear(true); return; }
     const newAll = { ...allData };
     delete newAll[dateStr];
+    // Remove any auto leave deduction for this date
+    if (existing.leaveDeductType) {
+      leaveRemoveAutoEntry(dateStr);
+      ENJ_cloudSync();
+    }
     onSave(newAll);
   }
 
@@ -884,7 +954,7 @@ function ShiftModal({ dateStr, data, allData, onSave, onClose, agencyMode }) {
               {SHIFT_TYPES.map(s => (
                 <button
                   key={s.id}
-                  onClick={() => setShiftType(s.id)}
+                  onClick={() => handleShiftTypeChange(s.id)}
                   className="btn"
                   style={{
                     padding: '7px 12px', fontSize: 13, fontWeight: 600,
@@ -899,6 +969,53 @@ function ShiftModal({ dateStr, data, allData, onSave, onClose, agencyMode }) {
               ))}
             </div>
           </div>
+
+          {/* Leave deduction picker — shown when a leave-type shift is selected */}
+          {isLeaveShift && (
+            <div style={{ marginBottom: 18, background: '#0f172a', border: '1px solid #334155', borderRadius: 12, padding: '14px 16px' }}>
+              <label style={{ display: 'block', fontSize: 12, color: '#a78bfa', fontWeight: 700, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>
+                💜 Deduct from leave balance
+              </label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+                {LEAVE_DEDUCT_TYPES.map(lt => {
+                  const bal = leaveGetBalance(leaveBalances, lt.id);
+                  const hrs = parseFloat(duration) || 8;
+                  const wouldOverdraw = bal < hrs;
+                  const selected = leaveDeductType === lt.id;
+                  return (
+                    <button key={lt.id} onClick={() => setLeaveDeductType(lt.id)} className="btn" style={{
+                      padding: '6px 10px', fontSize: 12, fontWeight: 600, borderRadius: 8,
+                      background: selected ? '#4c1d95' : '#1e293b',
+                      color: selected ? '#e9d5ff' : wouldOverdraw ? '#f87171' : '#94a3b8',
+                      border: `1px solid ${selected ? '#7c3aed' : '#334155'}`,
+                    }}>
+                      {lt.emoji} {lt.label}
+                      <span style={{ marginLeft: 5, fontSize: 11, opacity: 0.85 }}>
+                        {bal > 0 ? `${bal.toFixed(1)}h` : bal === 0 ? '0h' : `−${Math.abs(bal).toFixed(1)}h`}
+                      </span>
+                    </button>
+                  );
+                })}
+                <button onClick={() => setLeaveDeductType('')} className="btn" style={{
+                  padding: '6px 10px', fontSize: 12, borderRadius: 8,
+                  background: leaveDeductType === '' ? '#334155' : '#0f172a',
+                  color: '#64748b', border: '1px solid #334155',
+                }}>Don't track</button>
+              </div>
+              {leaveDeductType && (() => {
+                const lt = LEAVE_DEDUCT_TYPES.find(l => l.id === leaveDeductType);
+                const bal = leaveGetBalance(leaveBalances, leaveDeductType);
+                const hrs = parseFloat(duration) || 8;
+                const after = bal - hrs;
+                return (
+                  <div style={{ fontSize: 12, color: after < 0 ? '#fca5a5' : '#86efac', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {after < 0 ? '⚠️' : '✓'}
+                    <span>{lt?.label}: {bal.toFixed(1)}h → <strong>{after.toFixed(1)}h</strong> after this shift{after < 0 ? ' (balance will go negative)' : ''}</span>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
 
           {/* Duration */}
           <div style={{ marginBottom: 18 }}>
