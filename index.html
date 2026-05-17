@@ -2417,13 +2417,32 @@ function App() {
 
     // Sum shifts in range
     let gross = 0;
+    let leavePay = 0;  // sick + annual leave paid at ordinary rate
     let totalWorkedHours = 0; // for uniform/laundry cap
     for (let i = 0; i <= 13; i++) {
       const d = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), rangeStart.getDate() + i);
       const y = d.getFullYear(), mo = d.getMonth(), day = d.getDate();
       const dk = dateKey(y, mo, day);
       const data = allData[dk];
-      if (!data?.shiftType || ['rdo','leave','off','sick'].includes(data.shiftType)) continue;
+      if (!data?.shiftType || ['rdo','off'].includes(data.shiftType)) continue;
+
+      // ── Sick leave — paid at ordinary rate (base rate × hours, no loadings) ──
+      if (data.shiftType === 'sick') {
+        const hrs = parseFloat(data.duration) || 8;
+        const pay = (agencyMode ? (parseFloat(payRates.agDayRate) || 0) : base) * hrs;
+        leavePay += pay;
+        gross    += pay;
+        continue;
+      }
+
+      // ── Annual leave — paid at ordinary rate + 17.5% leave loading ──────────
+      if (data.shiftType === 'leave') {
+        const hrs = parseFloat(data.duration) || 8;
+        const pay = (agencyMode ? (parseFloat(payRates.agDayRate) || 0) : base) * hrs * 1.175;
+        leavePay += pay;
+        gross    += pay;
+        continue;
+      }
       const otHrs   = data.otChip && data.otChip !== 'None' ? parseDurChip(data.otChip) : 0;
       const regHrs  = parseFloat(data.duration) || 8.5;
       const totalHrs = regHrs + otHrs;
@@ -2492,7 +2511,7 @@ function App() {
     const periodLabel = `${fmtD(rangeStart)} – ${fmtD(rangeEnd)}`;
     const payDayLabel = payDay ? fmtD(payDay) : null;
 
-    if (gross === 0) return { gross: 0, net: 0, tax: 0, superAmt: 0, noShifts: true, periodLabel, payDayLabel, usingCycle, agencyMode, agABN, agSuper };
+    if (gross === 0) return { gross: 0, net: 0, tax: 0, superAmt: 0, leavePay: 0, noShifts: true, periodLabel, payDayLabel, usingCycle, agencyMode, agABN, agSuper };
 
     // Salary sacrifice (fortnightly) — supports flat $ or % of gross
     const salSacMode = payRates.salSacMode || 'flat';
@@ -2512,7 +2531,7 @@ function App() {
     const superAmt = agencyMode ? gross * agSuper / 100 : 0;
 
     const salSacPct = gross > 0 ? (salSacFn / gross) * 100 : 0;
-    return { gross, tax: fortnightTax, salSac: salSacFn, salSacPct, net: gross - fortnightTax - salSacFn, superAmt, noShifts: false, periodLabel, payDayLabel, usingCycle, agencyMode, agABN, agSuper };
+    return { gross, tax: fortnightTax, salSac: salSacFn, salSacPct, leavePay, net: gross - fortnightTax - salSacFn, superAmt, noShifts: false, periodLabel, payDayLabel, usingCycle, agencyMode, agABN, agSuper };
   }, [allData, payRates, showHolidays, holidayState]);
 
   useEffect(() => {
@@ -2997,6 +3016,12 @@ function App() {
                       <span style={{ fontSize: 12, color: '#94a3b8' }}>Gross pay</span>
                       <span style={{ fontSize: 12, color: '#e2e8f0', fontWeight: 600 }}>{formatMoney(upcomingPay.gross)}</span>
                     </div>
+                    {upcomingPay.leavePay > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <span style={{ fontSize: 11, color: '#64748b' }}>  incl. leave pay (ordinary rate)</span>
+                        <span style={{ fontSize: 11, color: '#64748b' }}>{formatMoney(upcomingPay.leavePay)}</span>
+                      </div>
+                    )}
                     {upcomingPay.agencyMode && upcomingPay.superAmt > 0 && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                         <span style={{ fontSize: 12, color: '#94a3b8' }}>Super ({upcomingPay.agSuper}%)</span>
