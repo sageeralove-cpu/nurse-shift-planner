@@ -495,7 +495,7 @@ function Paywall({ onUnlock }) {
       if (data.valid) {
         if (data.sync_token) localStorage.setItem('ENJ_SYNC_TOKEN', data.sync_token);
         // Save the code so we can remind them to keep it somewhere safe
-        localStorage.setItem('ENJ_MY_CODE', clean);
+        localStorage.setItem('ENJ_MY_CODE', code.trim().toUpperCase());
         // Restore all cloud data to localStorage — App will pick it up fresh on mount
         const ud = data.user_data;
         if (ud && typeof ud === 'object') {
