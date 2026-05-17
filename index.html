@@ -75,6 +75,26 @@ const STORAGE_KEY = 'nurseShiftData_v1';
 const TAX_KEY = 'nurseTaxSettings_v1';
 const RATES_KEY = 'ENJ_RATES';
 
+// ── Australian Daylight Saving dates (first Sun in Oct = start, first Sun in Apr = end) ──
+// Only NSW, VIC, SA, TAS, ACT observe DST. QLD, WA, NT do not.
+const DST_STATES = ['NSW','VIC','SA','TAS','ACT'];
+const AU_DST = [
+  // { start: clocks forward at 2am→3am, end: clocks back at 3am→2am }
+  { start: '2024-10-6',  end: '2025-4-6',  startLabel: 'Clocks go FORWARD 1 hour tonight at 2:00 am → 3:00 am', endLabel: 'Clocks go BACK 1 hour tonight at 3:00 am → 2:00 am' },
+  { start: '2025-10-5',  end: '2026-4-5',  startLabel: 'Clocks go FORWARD 1 hour tonight at 2:00 am → 3:00 am', endLabel: 'Clocks go BACK 1 hour tonight at 3:00 am → 2:00 am' },
+  { start: '2026-10-4',  end: '2027-4-4',  startLabel: 'Clocks go FORWARD 1 hour tonight at 2:00 am → 3:00 am', endLabel: 'Clocks go BACK 1 hour tonight at 3:00 am → 2:00 am' },
+];
+function getDSTAlert(state) {
+  if (!DST_STATES.includes(state)) return null;
+  const now = new Date();
+  const todayKey = `${now.getFullYear()}-${now.getMonth()+1}-${now.getDate()}`;
+  for (const d of AU_DST) {
+    if (d.start === todayKey) return { type: 'forward', msg: d.startLabel };
+    if (d.end === todayKey)   return { type: 'back',    msg: d.endLabel };
+  }
+  return null;
+}
+
 // ── Australian Public Holidays (National + per-state, 2025-2026) ────────────
 const AU_NATIONAL_HOLIDAYS = {
   // 2025
@@ -1496,6 +1516,7 @@ function App() {
   const [payRates, setPayRates] = useState(() => {
     try { return JSON.parse(localStorage.getItem(RATES_KEY)) || {}; } catch { return {}; }
   });
+  const [dstDismissed, setDstDismissed] = useState(false);
 
   function saveRates(r) {
     setPayRates(r);
@@ -1626,8 +1647,28 @@ function App() {
 
   const monthName = new Date(currentYear, currentMonth, 1).toLocaleDateString('en-AU', { month: 'long', year: 'numeric' });
 
+  const dstAlert = getDSTAlert(holidayState);
+
   return (
     <div className={lightMode ? 'light-mode' : ''} style={{ minHeight: '100vh', background: '#0f172a', fontFamily: 'Inter, sans-serif' }}>
+      {/* DST Banner */}
+      {dstAlert && !dstDismissed && (
+        <div style={{
+          background: dstAlert.type === 'forward' ? 'linear-gradient(90deg,#92400e,#b45309)' : 'linear-gradient(90deg,#1e3a5f,#1d4ed8)',
+          padding: '10px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 20 }}>{dstAlert.type === 'forward' ? '⏰' : '🕰️'}</span>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 13, color: '#fff' }}>
+                Daylight Saving {dstAlert.type === 'forward' ? 'Starts' : 'Ends'} Tonight — {holidayState}
+              </div>
+              <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)', marginTop: 2 }}>{dstAlert.msg}</div>
+            </div>
+          </div>
+          <button onClick={() => setDstDismissed(true)} style={{ background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>Got it ✓</button>
+        </div>
+      )}
       {/* Header */}
       <div style={{ background: '#1e293b', borderBottom: '1px solid #334155', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 8 }}>
