@@ -1694,7 +1694,7 @@ function App() {
               data={allData[dk]}
               isToday={isToday}
               isWeekend={isWeekend}
-              holiday={showHolidays ? (getHolidays(holidayState)[holidayKey(currentYear, currentMonth, day)] || null) : null}
+              holiday={showHolidays ? (getHolidays(holidayState)[holidayKey(currentYear, currentMonth + 1, day)] || null) : null}
               onOpen={(y, m, d) => setModalDay({ year: y, month: m, day: d })}
               onTooltip={(e, data, rect) => setTooltip({ data, rect, col: colIndex })}
               onTooltipHide={() => setTooltip(null)}
