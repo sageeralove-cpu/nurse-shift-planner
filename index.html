@@ -76,6 +76,7 @@ const OT_CHIPS = Array.from({length: 25}, (_, i) => {
 const STORAGE_KEY = 'nurseShiftData_v1';
 const TAX_KEY = 'nurseTaxSettings_v1';
 const RATES_KEY = 'ENJ_RATES';
+const LSL_KEY   = 'ENJ_LSL_DATA';
 
 // ── Australian Daylight Saving dates (first Sun in Oct = start, first Sun in Apr = end) ──
 // Only NSW, VIC, SA, TAS, ACT observe DST. QLD, WA, NT do not.
@@ -465,7 +466,7 @@ function Paywall({ onUnlock }) {
 }
 
 // ── Shift Modal ────────────────────────────────────────────────────────────
-function ShiftModal({ dateStr, data, allData, onSave, onClose }) {
+function ShiftModal({ dateStr, data, allData, onSave, onClose, agencyMode }) {
   const existing = data || {};
   const [shiftType, setShiftType] = useState(existing.shiftType || '');
   const [duration, setDuration] = useState(existing.duration || '');
@@ -483,6 +484,7 @@ function ShiftModal({ dateStr, data, allData, onSave, onClose }) {
   const [extPay, setExtPay] = useState(existing.extPay || '');
   const [extPayType, setExtPayType] = useState(existing.extPayType || 'payg');
   const [inCharge, setInCharge] = useState(existing.inCharge || false);
+  const [agencyClient, setAgencyClient] = useState(existing.agencyClient || '');
   const [confirmClear, setConfirmClear] = useState(false);
   const [actPreset, setActPreset] = useState(null);
   const [actDur, setActDur] = useState('');
@@ -517,7 +519,7 @@ function ShiftModal({ dateStr, data, allData, onSave, onClose }) {
       shiftType, duration, startTime, otChip, otPosition,
       isPayday, payAmount, isFortnightly, regularAmount,
       activities, externalWork, workplace, extHours, extPay, extPayType,
-      inCharge,
+      inCharge, agencyClient,
     };
     const newAll = { ...allData };
     newAll[dateStr] = dayData;
@@ -873,6 +875,19 @@ function ShiftModal({ dateStr, data, allData, onSave, onClose }) {
                 </button>
               </div>
               {inCharge && <div style={{ fontSize: 11, color: '#7c3aed', marginTop: 5 }}>In-charge allowance will be applied to pay estimate</div>}
+            </div>
+          )}
+
+          {/* Agency / Client name — only when agency mode active */}
+          {agencyMode && shiftType && !['rdo','leave','off','sick'].includes(shiftType) && (
+            <div style={{ marginBottom: 18 }}>
+              <label style={{ fontSize: 12, color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1, display: 'block', marginBottom: 8 }}>🏢 Agency / Hospital</label>
+              <input
+                value={agencyClient}
+                onChange={e => setAgencyClient(e.target.value)}
+                placeholder="Agency or hospital name (optional)"
+                style={{ width: '100%', padding: '10px 14px', borderRadius: 8, background: '#0f172a', border: '1px solid #0891b2', color: '#f1f5f9', fontSize: 14, outline: 'none' }}
+              />
             </div>
           )}
 
@@ -1520,10 +1535,8 @@ function Tooltip({ data, rect, colIndex }) {
 
 // ── Long Service Leave Calculator ─────────────────────────────────────────
 function LSLCalc({ payRates, holidayState, onClose }) {
-  const [startDate, setStartDate] = useState('');
   const base = parseFloat(payRates.base) || 0;
 
-  // State-specific LSL rules
   const LSL_RULES = {
     NSW: { minYears: 10, weeksPerYear: 52/60 },
     VIC: { minYears: 7,  weeksPerYear: 52/60 },
@@ -1536,6 +1549,22 @@ function LSLCalc({ payRates, holidayState, onClose }) {
   };
   const rule = LSL_RULES[holidayState] || LSL_RULES.NSW;
 
+  // All LSL data persisted together
+  const [lslData, setLslData] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(LSL_KEY)) || {}; } catch { return {}; }
+  });
+  function saveLsl(d) { setLslData(d); localStorage.setItem(LSL_KEY, JSON.stringify(d)); }
+
+  const startDate    = lslData.startDate    || '';
+  const loggedHours  = lslData.loggedHours  || ''; // employer-confirmed available hours
+  const usedEntries  = lslData.usedEntries  || []; // [{id, date, hours, note}]
+
+  // Add-entry form state
+  const [addingEntry, setAddingEntry]   = useState(false);
+  const [entryDate,   setEntryDate]     = useState('');
+  const [entryHours,  setEntryHours]    = useState('');
+  const [entryNote,   setEntryNote]     = useState('');
+
   const info = useMemo(() => {
     if (!startDate) return null;
     const [sy, sm, sd] = startDate.split('-').map(Number);
@@ -1543,16 +1572,31 @@ function LSLCalc({ payRates, holidayState, onClose }) {
     const today = new Date(); today.setHours(0,0,0,0);
     const years = (today - start) / (1000 * 60 * 60 * 24 * 365.25);
     if (years < 0) return null;
-    const weeksAccrued = years * rule.weeksPerYear;
-    const eligible = years >= rule.minYears;
-    const eligibleDate = new Date(sy + rule.minYears, sm - 1, sd);
-    const daysToEligible = eligible ? 0 : Math.ceil((eligibleDate - today) / (1000 * 60 * 60 * 24));
-    const value = weeksAccrued * 38 * base;
-    const eligibleValue = rule.minYears * rule.weeksPerYear * 38 * base;
-    return { years, weeksAccrued, eligible, eligibleDate, daysToEligible, value, eligibleValue };
+    const weeksAccrued   = years * rule.weeksPerYear;
+    const accruedHours   = weeksAccrued * 38;
+    const eligible       = years >= rule.minYears;
+    const eligibleDate   = new Date(sy + rule.minYears, sm - 1, sd);
+    const daysToEligible = eligible ? 0 : Math.ceil((eligibleDate - today) / 86400000);
+    const value          = accruedHours * base;
+    const eligibleValue  = rule.minYears * rule.weeksPerYear * 38 * base;
+    return { years, weeksAccrued, accruedHours, eligible, eligibleDate, daysToEligible, value, eligibleValue };
   }, [startDate, holidayState, base]);
 
+  const totalUsed     = usedEntries.reduce((s, e) => s + (parseFloat(e.hours) || 0), 0);
+  const availableHrs  = loggedHours !== '' ? (parseFloat(loggedHours) || 0) : (info ? info.accruedHours : 0);
+  const balance       = availableHrs - totalUsed;
+
+  function addEntry() {
+    if (!entryHours || parseFloat(entryHours) <= 0) return;
+    const entry = { id: Date.now(), date: entryDate, hours: parseFloat(entryHours), note: entryNote };
+    saveLsl({ ...lslData, usedEntries: [...usedEntries, entry] });
+    setEntryDate(''); setEntryHours(''); setEntryNote(''); setAddingEntry(false);
+  }
+  function removeEntry(id) { saveLsl({ ...lslData, usedEntries: usedEntries.filter(e => e.id !== id) }); }
+
   const fmtD = d => d.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
+
+  const inputStyle = { width: '100%', padding: '9px 12px', borderRadius: 8, background: '#0f172a', border: '1px solid #334155', color: '#f1f5f9', fontSize: 13, outline: 'none' };
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -1560,72 +1604,131 @@ function LSLCalc({ payRates, holidayState, onClose }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <div>
             <div style={{ fontWeight: 700, fontSize: 17, color: '#f1f5f9' }}>🏆 Long Service Leave</div>
-            <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{holidayState} entitlement · min {rule.minYears} yrs · {(rule.weeksPerYear).toFixed(2)} wks/yr</div>
+            <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{holidayState} · min {rule.minYears} yrs · {rule.weeksPerYear.toFixed(2)} wks/yr</div>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 24, cursor: 'pointer' }}>×</button>
         </div>
 
-        <div style={{ marginBottom: 18 }}>
+        {/* Start date */}
+        <div style={{ marginBottom: 14 }}>
           <label style={{ fontSize: 12, color: '#94a3b8', fontWeight: 600, display: 'block', marginBottom: 6 }}>Employment start date</label>
-          <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
-            style={{ width: '100%', padding: '10px 14px', borderRadius: 8, background: '#0f172a', border: '1px solid #334155', color: '#f1f5f9', fontSize: 14, outline: 'none' }} />
+          <input type="date" value={startDate} onChange={e => saveLsl({ ...lslData, startDate: e.target.value })}
+            style={{ ...inputStyle }} />
         </div>
 
-        {!base && <div style={{ background: '#1a1a2e', borderRadius: 10, padding: '12px', color: '#64748b', fontSize: 13, marginBottom: 12 }}>Set your base hourly rate in ⚙️ Settings → Pay Calculator to see value estimates.</div>}
+        {!base && <div style={{ background: '#1a1a2e', borderRadius: 10, padding: '12px', color: '#64748b', fontSize: 13, marginBottom: 12 }}>Set base hourly rate in ⚙️ Settings to see value estimates.</div>}
 
         {info && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {/* Service */}
+
+            {/* Service + eligibility */}
             <div style={{ background: '#0f172a', borderRadius: 10, padding: '14px', border: '1px solid #1e3a5f' }}>
-              <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 8 }}>SERVICE</div>
+              <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 8, textTransform: 'uppercase' }}>Service</div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                 <span style={{ fontSize: 13, color: '#94a3b8' }}>Years of service</span>
                 <span style={{ fontSize: 13, color: '#e2e8f0', fontWeight: 600 }}>{info.years.toFixed(1)} yrs</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 13, color: '#94a3b8' }}>LSL weeks accrued</span>
-                <span style={{ fontSize: 13, color: '#60a5fa', fontWeight: 600 }}>{info.weeksAccrued.toFixed(2)} wks</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span style={{ fontSize: 13, color: '#94a3b8' }}>Calculated accrual</span>
+                <span style={{ fontSize: 13, color: '#60a5fa', fontWeight: 600 }}>{info.weeksAccrued.toFixed(2)} wks · {info.accruedHours.toFixed(1)} hrs</span>
               </div>
+              {info.eligible
+                ? <div style={{ color: '#34d399', fontWeight: 700, fontSize: 13, marginTop: 4 }}>✅ Eligible for LSL</div>
+                : <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+                    <span style={{ fontSize: 13, color: '#94a3b8' }}>Eligible in</span>
+                    <span style={{ fontSize: 13, color: '#f59e0b', fontWeight: 600 }}>{info.daysToEligible.toLocaleString()} days ({fmtD(info.eligibleDate)})</span>
+                  </div>
+              }
             </div>
 
-            {/* Eligibility */}
-            <div style={{ background: '#0f172a', borderRadius: 10, padding: '14px', border: `1px solid ${info.eligible ? '#16a34a' : '#334155'}` }}>
-              <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 8 }}>ELIGIBILITY</div>
-              {info.eligible ? (
-                <div style={{ color: '#34d399', fontWeight: 700, fontSize: 14 }}>✅ You are eligible for LSL</div>
+            {/* Employer logged hours */}
+            <div style={{ background: '#0f172a', borderRadius: 10, padding: '14px', border: '1px solid #1e3a5f' }}>
+              <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 8, textTransform: 'uppercase' }}>Employer Logged Hours (from payslip / HR)</div>
+              <div style={{ position: 'relative' }}>
+                <input type="number" value={loggedHours} onChange={e => saveLsl({ ...lslData, loggedHours: e.target.value })}
+                  placeholder={`Leave blank to use calculated (${info.accruedHours.toFixed(1)} hrs)`}
+                  style={{ ...inputStyle, paddingRight: 40 }} />
+                <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: '#64748b', fontSize: 12 }}>hrs</span>
+              </div>
+              <div style={{ fontSize: 11, color: '#475569', marginTop: 6 }}>If set, overrides the calculated figure above as your available balance.</div>
+            </div>
+
+            {/* Hours used log */}
+            <div style={{ background: '#0f172a', borderRadius: 10, padding: '14px', border: '1px solid #1e3a5f' }}>
+              <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 10, textTransform: 'uppercase' }}>LSL Taken (hours used)</div>
+
+              {usedEntries.length === 0 && !addingEntry && (
+                <div style={{ fontSize: 12, color: '#475569', marginBottom: 10 }}>No LSL taken logged yet.</div>
+              )}
+
+              {usedEntries.map(e => (
+                <div key={e.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, background: '#1e293b', borderRadius: 8, padding: '8px 10px' }}>
+                  <div>
+                    <span style={{ fontSize: 13, color: '#e2e8f0', fontWeight: 600 }}>−{e.hours} hrs</span>
+                    {e.date && <span style={{ fontSize: 12, color: '#64748b', marginLeft: 8 }}>{e.date}</span>}
+                    {e.note && <span style={{ fontSize: 12, color: '#94a3b8', marginLeft: 8 }}>· {e.note}</span>}
+                  </div>
+                  <button onClick={() => removeEntry(e.id)} style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 4px' }}>×</button>
+                </div>
+              ))}
+
+              {addingEntry ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input type="date" value={entryDate} onChange={e => setEntryDate(e.target.value)}
+                      style={{ flex: 1, padding: '8px 10px', borderRadius: 8, background: '#1e293b', border: '1px solid #334155', color: '#f1f5f9', fontSize: 12, outline: 'none' }} />
+                    <div style={{ position: 'relative', width: 110 }}>
+                      <input type="number" value={entryHours} onChange={e => setEntryHours(e.target.value)} placeholder="Hours"
+                        style={{ width: '100%', padding: '8px 32px 8px 10px', borderRadius: 8, background: '#1e293b', border: '1px solid #334155', color: '#f1f5f9', fontSize: 12, outline: 'none' }} />
+                      <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: '#64748b', fontSize: 11 }}>hrs</span>
+                    </div>
+                  </div>
+                  <input value={entryNote} onChange={e => setEntryNote(e.target.value)} placeholder="Note (e.g. LSL approved week 1)"
+                    style={{ padding: '8px 10px', borderRadius: 8, background: '#1e293b', border: '1px solid #334155', color: '#f1f5f9', fontSize: 12, outline: 'none' }} />
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={addEntry} className="btn" style={{ flex: 1, padding: '8px', background: '#3b82f6', color: '#fff', fontSize: 12 }}>Add Entry</button>
+                    <button onClick={() => { setAddingEntry(false); setEntryDate(''); setEntryHours(''); setEntryNote(''); }} className="btn" style={{ padding: '8px 14px', background: '#334155', color: '#94a3b8', fontSize: 12 }}>Cancel</button>
+                  </div>
+                </div>
               ) : (
-                <>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <span style={{ fontSize: 13, color: '#94a3b8' }}>Eligible date</span>
-                    <span style={{ fontSize: 13, color: '#e2e8f0', fontWeight: 600 }}>{fmtD(info.eligibleDate)}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: 13, color: '#94a3b8' }}>Days remaining</span>
-                    <span style={{ fontSize: 13, color: '#f59e0b', fontWeight: 600 }}>{info.daysToEligible.toLocaleString()} days</span>
-                  </div>
-                </>
+                <button onClick={() => setAddingEntry(true)} className="btn" style={{ width: '100%', padding: '8px', background: '#1e3a5f', color: '#60a5fa', fontSize: 12, marginTop: 4, border: '1px dashed #1e3a5f' }}>+ Log LSL Taken</button>
               )}
             </div>
 
-            {/* Value */}
-            {base > 0 && (
-              <div style={{ background: '#0f172a', borderRadius: 10, padding: '14px', border: '1px solid #1e3a5f' }}>
-                <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 8 }}>ESTIMATED VALUE (@ ${base}/hr · 38 hr week)</div>
+            {/* Balance summary */}
+            <div style={{ background: balance >= 0 ? '#052e16' : '#2d0a0a', borderRadius: 10, padding: '14px', border: `1px solid ${balance >= 0 ? '#16a34a' : '#7f1d1d'}` }}>
+              <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 10, textTransform: 'uppercase' }}>Balance</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span style={{ fontSize: 13, color: '#94a3b8' }}>Available {loggedHours !== '' ? '(employer)' : '(calculated)'}</span>
+                <span style={{ fontSize: 13, color: '#60a5fa', fontWeight: 600 }}>{availableHrs.toFixed(1)} hrs</span>
+              </div>
+              {totalUsed > 0 && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <span style={{ fontSize: 13, color: '#94a3b8' }}>Current accrued value</span>
-                  <span style={{ fontSize: 13, color: '#60a5fa', fontWeight: 600 }}>{formatMoney(info.value)}</span>
+                  <span style={{ fontSize: 13, color: '#94a3b8' }}>Total taken</span>
+                  <span style={{ fontSize: 13, color: '#f87171', fontWeight: 600 }}>−{totalUsed.toFixed(1)} hrs</span>
                 </div>
-                {!info.eligible && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: 13, color: '#94a3b8' }}>Value at eligibility</span>
-                    <span style={{ fontSize: 13, color: '#34d399', fontWeight: 600 }}>{formatMoney(info.eligibleValue)}</span>
-                  </div>
-                )}
+              )}
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #334155', paddingTop: 8, marginTop: 4 }}>
+                <span style={{ fontSize: 14, color: '#cbd5e1', fontWeight: 700 }}>Remaining balance</span>
+                <span style={{ fontSize: 14, color: balance >= 0 ? '#34d399' : '#f87171', fontWeight: 700 }}>{balance >= 0 ? '' : '−'}{Math.abs(balance).toFixed(1)} hrs</span>
+              </div>
+              {base > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
+                  <span style={{ fontSize: 12, color: '#64748b' }}>Est. value of balance</span>
+                  <span style={{ fontSize: 12, color: '#60a5fa', fontWeight: 600 }}>{formatMoney(balance * base)}</span>
+                </div>
+              )}
+            </div>
+
+            {base > 0 && !info.eligible && (
+              <div style={{ background: '#0f172a', borderRadius: 10, padding: '12px', border: '1px solid #1e3a5f' }}>
+                <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>Value at eligibility ({rule.minYears} yrs)</div>
+                <div style={{ fontSize: 14, color: '#34d399', fontWeight: 700 }}>{formatMoney(info.eligibleValue)}</div>
               </div>
             )}
 
             <div style={{ fontSize: 11, color: '#475569', lineHeight: 1.5 }}>
-              Estimates only. Based on {holidayState} rules ({rule.minYears} yr minimum, {rule.weeksPerYear.toFixed(2)} wks/yr). Consult your employer or Fair Work for exact entitlements.
+              Estimates only. Based on {holidayState} rules ({rule.minYears} yr min, {rule.weeksPerYear.toFixed(2)} wks/yr). Consult your employer or Fair Work for exact entitlements.
             </div>
           </div>
         )}
@@ -1663,19 +1766,30 @@ function App() {
 
   // Upcoming pay estimate — uses real pay cycle if configured, else next 14 days
   const upcomingPay = useMemo(() => {
+    const agencyMode = !!payRates.agencyMode;
+    const agABN      = !!payRates.agABN;
+    const agSuper    = parseFloat(payRates.agSuper) || 11.5;
+
+    // Need at least a base rate (standard) OR agency day rate (agency mode)
     const base = parseFloat(payRates.base) || 0;
-    if (!base) return null;
-    const casualPct= parseFloat(payRates.casualPct)|| 0;
-    const aftPct   = parseFloat(payRates.aftPct)   || 0;
-    const nightPct = parseFloat(payRates.nightPct) || 0;
-    const satPct   = parseFloat(payRates.satPct)   || 0;
-    const sunPct   = parseFloat(payRates.sunPct)   || 0;
-    const phPct    = parseFloat(payRates.phPct)    || 0;
+    if (!agencyMode && !base) return null;
+    if (agencyMode && !parseFloat(payRates.agDayRate)) return null;
+
+    const casualPct  = parseFloat(payRates.casualPct) || 0;
+    const aftPct     = parseFloat(payRates.aftPct)    || 0;
+    const nightPct   = parseFloat(payRates.nightPct)  || 0;
+    const satPct     = parseFloat(payRates.satPct)    || 0;
+    const sunPct     = parseFloat(payRates.sunPct)    || 0;
+    const phPct      = parseFloat(payRates.phPct)     || 0;
     const casualBase = base * (1 + casualPct / 100);
-    const otX1     = parseFloat(payRates.otX1)     || 1.5;
-    const otX2     = parseFloat(payRates.otX2)     || 2.0;
-    const inchargeAmt = parseFloat(payRates.incharge) || 0;
-    const qualsRate   = parseFloat(payRates.quals)    || 0;
+    const otX1       = parseFloat(payRates.otX1)      || 1.5;
+    const otX2       = parseFloat(payRates.otX2)      || 2.0;
+    const inchargeAmt  = parseFloat(payRates.incharge)   || 0;
+    const qualsRate    = parseFloat(payRates.quals)       || 0;
+    const oncallRate   = parseFloat(payRates.oncallRate)  || 0;
+    const mealAllow    = parseFloat(payRates.mealAllow)   || 0;
+    const shiftAllow   = parseFloat(payRates.shiftAllow)  || 0;
+    const uniformAllow = parseFloat(payRates.uniformAllow)|| 0;
     const holidays = getHolidays(holidayState);
 
     // Determine date range — real cycle or fallback 14 days
@@ -1689,8 +1803,7 @@ function App() {
         const [spy, spm, spd] = payRates.anchorPeriodStart.split('-').map(Number);
         const anchorPay   = new Date(apy, apm - 1, apd);
         const anchorStart = new Date(spy, spm - 1, spd);
-        const offsetDays  = Math.round((anchorStart - anchorPay) / 86400000); // negative
-        // Find next pay day strictly after today
+        const offsetDays  = Math.round((anchorStart - anchorPay) / 86400000);
         const diffDays = Math.round((today - anchorPay) / 86400000);
         let fn = Math.ceil(diffDays / 14);
         if (fn < 0) fn = 0;
@@ -1716,44 +1829,81 @@ function App() {
       const dk = dateKey(y, mo, day);
       const data = allData[dk];
       if (!data?.shiftType || ['rdo','leave','off','sick'].includes(data.shiftType)) continue;
-      const otHrs  = data.otChip && data.otChip !== 'None' ? parseDurChip(data.otChip) : 0;
-      const regHrs = parseFloat(data.duration) || 8.5;
+      const otHrs   = data.otChip && data.otChip !== 'None' ? parseDurChip(data.otChip) : 0;
+      const regHrs  = parseFloat(data.duration) || 8.5;
       const totalHrs = regHrs + otHrs;
-      const dow = d.getDay();
-      const hKey = holidayKey(y, mo + 1, day);
-      let pct = 0;
-      if (showHolidays && holidays[hKey]) pct = phPct;
-      else if (dow === 0) pct = sunPct;
-      else if (dow === 6) pct = satPct;
-      else if (data.shiftType === 'night')   pct = nightPct;
-      else if (data.shiftType === 'evening') pct = aftPct;
-      // Casual base applies first, then shift loading on top
-      const effectiveRate = casualBase * (1 + pct / 100);
+      const dow     = d.getDay();
+      const hKey    = holidayKey(y, mo + 1, day);
+      const isHol   = showHolidays && !!holidays[hKey];
+
       let shiftPay = 0;
-      if (data.shiftType === 'overtime') {
-        // Unrostered overtime: full shift at otX1 rate (+ day/weekend loading)
-        shiftPay = effectiveRate * otX1 * regHrs;
+
+      // ── On-call (standby) ──────────────────────────────────────────
+      if (data.shiftType === 'oncall') {
+        const rate = agencyMode ? (parseFloat(payRates.agOncallRate) || 0) : oncallRate;
+        shiftPay = rate * regHrs;
+
+      // ── Agency mode — flat rates ───────────────────────────────────
+      } else if (agencyMode) {
+        let flatRate = 0;
+        if (isHol)                              flatRate = parseFloat(payRates.agPHRate)    || 0;
+        else if (dow === 0)                     flatRate = parseFloat(payRates.agSunRate)   || 0;
+        else if (dow === 6)                     flatRate = parseFloat(payRates.agSatRate)   || 0;
+        else if (data.shiftType === 'night')    flatRate = parseFloat(payRates.agNightRate) || 0;
+        else if (data.shiftType === 'evening')  flatRate = parseFloat(payRates.agEveRate)   || 0;
+        else                                    flatRate = parseFloat(payRates.agDayRate)   || 0;
+        shiftPay = flatRate * regHrs;
+
+      // ── Standard — base + loadings ────────────────────────────────
       } else {
-        shiftPay = effectiveRate * regHrs;
-        if (otHrs > 0) {
-          shiftPay += casualBase * otX1 * Math.min(otHrs, 1);
-          if (otHrs > 1) shiftPay += casualBase * otX2 * (otHrs - 1);
+        let pct = 0;
+        if (isHol)                              pct = phPct;
+        else if (dow === 0)                     pct = sunPct;
+        else if (dow === 6)                     pct = satPct;
+        else if (data.shiftType === 'night')    pct = nightPct;
+        else if (data.shiftType === 'evening')  pct = aftPct;
+        const effectiveRate = casualBase * (1 + pct / 100);
+        if (data.shiftType === 'overtime') {
+          shiftPay = effectiveRate * otX1 * regHrs;
+        } else {
+          shiftPay = effectiveRate * regHrs;
+          if (otHrs > 0) {
+            shiftPay += casualBase * otX1 * Math.min(otHrs, 1);
+            if (otHrs > 1) shiftPay += casualBase * otX2 * (otHrs - 1);
+          }
         }
+        if (data.inCharge && inchargeAmt) shiftPay += inchargeAmt;
+        if (qualsRate) shiftPay += qualsRate * totalHrs;
       }
-      if (data.inCharge && inchargeAmt) shiftPay += inchargeAmt;
-      if (qualsRate) shiftPay += qualsRate * totalHrs;
+
+      // Shift-level allowances (both modes)
+      if (shiftAllow) shiftPay += shiftAllow;
+      if (mealAllow && otHrs > 0) shiftPay += mealAllow;
+
       gross += shiftPay;
     }
+
+    // Fortnightly flat allowances
+    if (uniformAllow) gross += uniformAllow;
 
     const fmtD = d => d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
     const periodLabel = `${fmtD(rangeStart)} – ${fmtD(rangeEnd)}`;
     const payDayLabel = payDay ? fmtD(payDay) : null;
 
-    if (gross === 0) return { gross: 0, net: 0, tax: 0, noShifts: true, periodLabel, payDayLabel, usingCycle };
-    const annualGross = gross * 26;
-    const tr = calcTax(annualGross, { residency: 'resident', tfThreshold: true, helpDebt: false });
-    const fortnightTax = tr.totalTax / 26;
-    return { gross, tax: fortnightTax, net: gross - fortnightTax, noShifts: false, periodLabel, payDayLabel, usingCycle };
+    if (gross === 0) return { gross: 0, net: 0, tax: 0, superAmt: 0, noShifts: true, periodLabel, payDayLabel, usingCycle, agencyMode, agABN, agSuper };
+
+    // Tax
+    let fortnightTax = 0;
+    if (!agABN) {
+      const annualGross = gross * 26;
+      const tr = calcTax(annualGross, { residency: 'resident', tfThreshold: true, helpDebt: false });
+      fortnightTax = tr.totalTax / 26;
+    }
+
+    // Super (agency mode shows separately)
+    const superAmt = agencyMode ? gross * agSuper / 100 : 0;
+
+    return { gross, tax: fortnightTax, net: gross - fortnightTax, superAmt, noShifts: false, periodLabel, payDayLabel, usingCycle, agencyMode, agABN, agSuper };
   }, [allData, payRates, showHolidays, holidayState]);
 
   useEffect(() => {
@@ -1961,6 +2111,7 @@ function App() {
           allData={allData}
           onSave={newData => { setAllData(newData); setModalDay(null); }}
           onClose={() => setModalDay(null)}
+          agencyMode={!!payRates.agencyMode}
         />
       )}
 
@@ -2082,6 +2233,28 @@ function App() {
               </div>
             ))}
 
+            {/* On-call & extras */}
+            <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, margin: '10px 0 6px', textTransform: 'uppercase', letterSpacing: 0.5 }}>On-Call & Extras</div>
+            {[
+              { key: 'oncallRate',  label: '📟 On-call standby rate', suffix: '/hr',  prefix: '$', placeholder: 'e.g. 12.00', step: '0.01' },
+              { key: 'callbackMin', label: '⏱ Call-back minimum hrs', suffix: 'hrs', prefix: '',  placeholder: '3',           step: '0.5'  },
+              { key: 'callbackX',   label: '↩ Call-back multiplier',  suffix: '×',   prefix: '',  placeholder: '1.5',          step: '0.25' },
+              { key: 'mealAllow',   label: '🍽 Meal allowance (OT shift)', suffix: '/shift', prefix: '$', placeholder: 'e.g. 18.00', step: '0.01' },
+              { key: 'shiftAllow',  label: '📋 Shift flat allowance', suffix: '/shift', prefix: '$', placeholder: 'e.g. 5.00',  step: '0.01' },
+              { key: 'uniformAllow',label: '👕 Uniform/laundry',      suffix: '/fn',  prefix: '$', placeholder: 'e.g. 6.00',  step: '0.01' },
+            ].map(({ key, label, suffix, prefix, placeholder, step }) => (
+              <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <div style={{ fontSize: 12, color: '#94a3b8', flex: 1 }}>{label}</div>
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  {prefix && <span style={{ color: '#64748b', fontSize: 12 }}>{prefix}</span>}
+                  <input type="number" step={step} value={payRates[key] || ''} onChange={e => saveRates({ ...payRates, [key]: e.target.value })}
+                    placeholder={placeholder}
+                    style={{ width: 72, padding: '5px 8px', borderRadius: 6, background: '#0f172a', border: '1px solid #334155', color: '#e2e8f0', fontSize: 12, outline: 'none' }} />
+                  <span style={{ color: '#64748b', fontSize: 11, whiteSpace: 'nowrap' }}>{suffix}</span>
+                </div>
+              </div>
+            ))}
+
             {/* Pay cycle anchor */}
             <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, margin: '10px 0 6px', textTransform: 'uppercase', letterSpacing: 0.5 }}>📅 Pay Cycle (optional)</div>
             <div style={{ fontSize: 11, color: '#475569', marginBottom: 8, lineHeight: 1.5 }}>Enter a known pay date and the start of that pay period so the estimate uses your exact fortnightly cycle.</div>
@@ -2113,25 +2286,108 @@ function App() {
                   <div style={{ fontSize: 12, color: '#475569' }}>No shifts logged for this period</div>
                 ) : (
                   <>
+                    {upcomingPay.agencyMode && (
+                      <div style={{ fontSize: 11, color: '#0891b2', fontWeight: 600, marginBottom: 6 }}>🏢 Agency Mode{upcomingPay.agABN ? ' · ABN Contractor' : ''}</div>
+                    )}
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                       <span style={{ fontSize: 12, color: '#94a3b8' }}>Gross pay</span>
                       <span style={{ fontSize: 12, color: '#e2e8f0', fontWeight: 600 }}>{formatMoney(upcomingPay.gross)}</span>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                      <span style={{ fontSize: 12, color: '#94a3b8' }}>Est. tax withheld</span>
-                      <span style={{ fontSize: 12, color: '#f87171' }}>−{formatMoney(upcomingPay.tax)}</span>
-                    </div>
+                    {upcomingPay.agencyMode && upcomingPay.superAmt > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <span style={{ fontSize: 12, color: '#94a3b8' }}>Super ({upcomingPay.agSuper}%)</span>
+                        <span style={{ fontSize: 12, color: '#60a5fa' }}>+{formatMoney(upcomingPay.superAmt)}</span>
+                      </div>
+                    )}
+                    {!upcomingPay.agABN && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <span style={{ fontSize: 12, color: '#94a3b8' }}>Est. tax withheld</span>
+                        <span style={{ fontSize: 12, color: '#f87171' }}>−{formatMoney(upcomingPay.tax)}</span>
+                      </div>
+                    )}
                     <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #1e3a5f', paddingTop: 6, marginTop: 2 }}>
                       <span style={{ fontSize: 13, color: '#cbd5e1', fontWeight: 700 }}>Take-home</span>
                       <span style={{ fontSize: 13, color: '#34d399', fontWeight: 700 }}>{formatMoney(upcomingPay.net)}</span>
                     </div>
-                    <div style={{ fontSize: 10, color: '#475569', marginTop: 6 }}>Resident tax, tax-free threshold on. Open 🧮 Tax Calc for full breakdown.</div>
+                    {upcomingPay.agABN
+                      ? <div style={{ fontSize: 10, color: '#f59e0b', marginTop: 6 }}>ABN mode: no tax withheld. Set aside approx 30–47% for your own tax obligations.</div>
+                      : <div style={{ fontSize: 10, color: '#475569', marginTop: 6 }}>Resident tax, tax-free threshold on. Open 🧮 Tax Calc for full breakdown.</div>
+                    }
                   </>
                 )}
               </div>
             )}
             {!upcomingPay && (
               <div style={{ fontSize: 11, color: '#475569', marginTop: 6 }}>Enter your base rate above to see a pay estimate.</div>
+            )}
+          </div>
+
+          {/* Agency Nurse Mode */}
+          <div style={{ borderTop: '1px solid #334155', paddingTop: 14, marginTop: 4, marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <div>
+                <div style={{ fontSize: 13, color: '#cbd5e1', fontWeight: 600 }}>🏢 Agency Nurse Mode</div>
+                <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>Use flat hourly rates instead of base + loadings</div>
+              </div>
+              <button
+                onClick={() => saveRates({ ...payRates, agencyMode: !payRates.agencyMode })}
+                style={{ width: 40, height: 22, borderRadius: 11, border: 'none', cursor: 'pointer', background: payRates.agencyMode ? '#0891b2' : '#334155', position: 'relative', transition: 'background 0.2s', flexShrink: 0 }}
+              >
+                <div style={{ position: 'absolute', top: 3, left: payRates.agencyMode ? 21 : 3, width: 16, height: 16, background: '#fff', borderRadius: '50%', transition: 'left 0.2s' }}></div>
+              </button>
+            </div>
+
+            {payRates.agencyMode && (
+              <div style={{ marginTop: 10 }}>
+                {/* Flat rates per shift type */}
+                <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>Flat Rates ($/hr incl. all loadings)</div>
+                {[
+                  { key: 'agDayRate',    label: '🌅 Day'        },
+                  { key: 'agEveRate',    label: '🌆 Evening'    },
+                  { key: 'agNightRate',  label: '🌙 Night'      },
+                  { key: 'agSatRate',    label: '🗓 Saturday'   },
+                  { key: 'agSunRate',    label: '☀️ Sunday'     },
+                  { key: 'agPHRate',     label: '🎉 Public Hol' },
+                  { key: 'agOncallRate', label: '📟 On-Call'    },
+                ].map(({ key, label }) => (
+                  <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <div style={{ fontSize: 12, color: '#94a3b8', flex: 1 }}>{label}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ color: '#64748b', fontSize: 12 }}>$</span>
+                      <input type="number" step="0.01" value={payRates[key] || ''} onChange={e => saveRates({ ...payRates, [key]: e.target.value })}
+                        placeholder="0.00"
+                        style={{ width: 72, padding: '5px 8px', borderRadius: 6, background: '#0f172a', border: '1px solid #0891b2', color: '#e2e8f0', fontSize: 12, outline: 'none' }} />
+                      <span style={{ color: '#64748b', fontSize: 11 }}>/hr</span>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Super */}
+                <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, margin: '10px 0 6px', textTransform: 'uppercase', letterSpacing: 0.5 }}>Superannuation</div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <div style={{ fontSize: 12, color: '#94a3b8', flex: 1 }}>Super rate</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <input type="number" step="0.1" value={payRates.agSuper || ''} onChange={e => saveRates({ ...payRates, agSuper: e.target.value })}
+                      placeholder="11.5"
+                      style={{ width: 60, padding: '5px 8px', borderRadius: 6, background: '#0f172a', border: '1px solid #334155', color: '#e2e8f0', fontSize: 12, outline: 'none' }} />
+                    <span style={{ color: '#64748b', fontSize: 11 }}>%</span>
+                  </div>
+                </div>
+
+                {/* ABN contractor */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ fontSize: 12, color: '#94a3b8' }}>🧾 ABN Contractor</div>
+                    <div style={{ fontSize: 11, color: '#475569' }}>No tax withheld — you invoice the agency</div>
+                  </div>
+                  <button
+                    onClick={() => saveRates({ ...payRates, agABN: !payRates.agABN })}
+                    style={{ width: 40, height: 22, borderRadius: 11, border: 'none', cursor: 'pointer', background: payRates.agABN ? '#f59e0b' : '#334155', position: 'relative', transition: 'background 0.2s', flexShrink: 0 }}
+                  >
+                    <div style={{ position: 'absolute', top: 3, left: payRates.agABN ? 21 : 3, width: 16, height: 16, background: '#fff', borderRadius: '50%', transition: 'left 0.2s' }}></div>
+                  </button>
+                </div>
+              </div>
             )}
           </div>
 
