@@ -1662,8 +1662,9 @@ function LeaveTracker({ payRates, onClose }) {
                         <span style={{ color: '#64748b', fontSize: 12, whiteSpace: 'nowrap' }}>hrs</span>
                       </div>
                       {lt.id === 'ado' && (
-                        <div style={{ fontSize: 11, color: '#0d9488', marginTop: 5, lineHeight: 1.5 }}>
-                          💡 ADO accrues when rostered — check your payslip for current banked hours. Each full day = 8 hrs. Use "+ Accrued" entries to log hours earned each fortnight.
+                        <div style={{ fontSize: 11, color: '#0d9488', marginTop: 5, lineHeight: 1.6 }}>
+                          💡 <strong>ADO is paid</strong> at ordinary rate when taken (e.g. 41.8 hrs × $56.52 on a Ramsay payslip). It appears on the calendar as a paid shift.<br/>
+                          <strong>ADO BANKED</strong> on your payslip = hours deducted each fortnight and placed into your ADO bank (e.g. −1.80 hrs/fn). Log these as "+ Accrued" entries to track your bank growing. When you take an ADO day (8 hrs), log it as "− Used".
                         </div>
                       )}
                       {lt.id === 'banked' && (
@@ -2044,7 +2045,7 @@ function App() {
       const y = d.getFullYear(), mo = d.getMonth(), day = d.getDate();
       const dk = dateKey(y, mo, day);
       const data = allData[dk];
-      if (!data?.shiftType || ['rdo','ado','leave','off','sick'].includes(data.shiftType)) continue;
+      if (!data?.shiftType || ['rdo','leave','off','sick'].includes(data.shiftType)) continue;
       const otHrs   = data.otChip && data.otChip !== 'None' ? parseDurChip(data.otChip) : 0;
       const regHrs  = parseFloat(data.duration) || 8.5;
       const totalHrs = regHrs + otHrs;
@@ -2054,8 +2055,14 @@ function App() {
 
       let shiftPay = 0;
 
+      // ── ADO — paid at ordinary rate (no shift loading) ────────────
+      if (data.shiftType === 'ado') {
+        shiftPay = agencyMode
+          ? (parseFloat(payRates.agDayRate) || 0) * regHrs
+          : casualBase * regHrs;
+
       // ── On-call (standby) ──────────────────────────────────────────
-      if (data.shiftType === 'oncall') {
+      } else if (data.shiftType === 'oncall') {
         const rate = agencyMode ? (parseFloat(payRates.agOncallRate) || 0) : oncallRate;
         shiftPay = rate * regHrs;
 
