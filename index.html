@@ -1237,6 +1237,8 @@ function TaxCalc({ allData, onClose }) {
   const [showSettings, setShowSettings] = useState(false);
   const [priorIncome, setPriorIncome] = useState(settings.priorIncome || '');
   const [priorWithheld, setPriorWithheld] = useState(settings.priorWithheld || '');
+  const [grossOverride, setGrossOverride] = useState(settings.grossOverride || '');
+  const [editingGross, setEditingGross] = useState(false);
 
   const residency = settings.residency || 'resident';
   const tfThreshold = settings.tfThreshold !== false;
@@ -1258,7 +1260,7 @@ function TaxCalc({ allData, onClose }) {
 
   const totalFYFromApp = fyPay + fyExtPay;
   const prior = parseFloat(priorIncome) || 0;
-  const annualGross = prior + totalFYFromApp;
+  const annualGross = grossOverride !== '' ? (parseFloat(grossOverride) || 0) : prior + totalFYFromApp;
 
   const taxResult = calcTax(annualGross, { residency, tfThreshold, helpDebt });
   const withheld = parseFloat(priorWithheld) || 0;
@@ -1272,11 +1274,12 @@ function TaxCalc({ allData, onClose }) {
     { range: '$180,001+', rate: '45c/$1 over $180,000', lower: 180001, upper: Infinity },
   ];
 
-  function saveSettings(s, newPriorIncome, newPriorWithheld) {
+  function saveSettings(s, newPriorIncome, newPriorWithheld, newGrossOverride) {
     const pi = newPriorIncome !== undefined ? newPriorIncome : priorIncome;
     const pw = newPriorWithheld !== undefined ? newPriorWithheld : priorWithheld;
+    const go = newGrossOverride !== undefined ? newGrossOverride : grossOverride;
     setSettings(s);
-    localStorage.setItem(TAX_KEY, JSON.stringify({ ...s, priorIncome: pi, priorWithheld: pw }));
+    localStorage.setItem(TAX_KEY, JSON.stringify({ ...s, priorIncome: pi, priorWithheld: pw, grossOverride: go }));
     ENJ_cloudSync();
   }
 
@@ -1376,14 +1379,43 @@ function TaxCalc({ allData, onClose }) {
 
           {/* Tax breakdown */}
           <div style={{ background: '#0f172a', borderRadius: 12, padding: 16, marginBottom: 14, border: '1px solid #334155' }}>
+            {/* Gross Income — tappable to override with payslip figure */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #1e293b', fontSize: 13 }}>
+              <span style={{ color: '#94a3b8', display: 'flex', alignItems: 'center', gap: 6 }}>
+                Gross Income
+                <button onClick={() => setEditingGross(g => !g)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: grossOverride !== '' ? '#f59e0b' : '#475569', padding: 0 }}>
+                  {grossOverride !== '' ? '✏️ override' : '✏️'}
+                </button>
+              </span>
+              {editingGross ? (
+                <input
+                  type="number"
+                  autoFocus
+                  value={grossOverride}
+                  onChange={e => { const v = e.target.value; setGrossOverride(v); saveSettings({ ...settings }, undefined, undefined, v); }}
+                  onBlur={() => setEditingGross(false)}
+                  placeholder={String(Math.round(prior + totalFYFromApp))}
+                  style={{ width: 120, padding: '4px 8px', borderRadius: 6, background: '#1e293b', border: '1px solid #f59e0b', color: '#f1f5f9', fontSize: 13, outline: 'none', textAlign: 'right' }}
+                />
+              ) : (
+                <span style={{ color: grossOverride !== '' ? '#f59e0b' : '#f1f5f9', fontWeight: 600, cursor: 'pointer' }} onClick={() => setEditingGross(true)}>
+                  {formatMoney(annualGross)}
+                </span>
+              )}
+            </div>
+            {grossOverride !== '' && (
+              <div style={{ fontSize: 11, color: '#64748b', padding: '4px 0 2px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>Auto-calculated: {formatMoney(prior + totalFYFromApp)}</span>
+                <button onClick={() => { setGrossOverride(''); saveSettings({ ...settings }, undefined, undefined, ''); }} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: 11, cursor: 'pointer', padding: 0 }}>✕ clear override</button>
+              </div>
+            )}
             {[
-              { label: 'Gross Income', value: annualGross },
               { label: 'Income Tax', value: -taxResult.rawTax, neg: true },
               { label: 'LITO Offset', value: taxResult.lito, pos: true },
               ...(residency === 'resident' ? [{ label: 'Medicare Levy (2%)', value: -taxResult.medicare, neg: true }] : []),
               ...(helpDebt && taxResult.helpRepayment > 0 ? [{ label: 'HELP Repayment', value: -taxResult.helpRepayment, neg: true }] : []),
             ].map((r, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #1e293b', fontSize: 13 }}>
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #1e293b', fontSize: 13, alignItems: 'center' }}>
                 <span style={{ color: '#94a3b8' }}>{r.label}</span>
                 <span style={{ color: r.neg ? '#ef4444' : r.pos ? '#10b981' : '#f1f5f9', fontWeight: 600 }}>
                   {r.neg || r.pos ? (r.neg ? '−' : '+') : ''}{formatMoney(Math.abs(r.value))}
