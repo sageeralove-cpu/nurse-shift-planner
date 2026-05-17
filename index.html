@@ -1334,13 +1334,13 @@ function TaxCalc({ allData, onClose }) {
               )}
               <div style={{ marginBottom: 10 }}>
                 <label style={{ fontSize: 12, color: '#64748b', display: 'block', marginBottom: 5 }}>Prior FY income (gross $)</label>
-                <input type="number" value={priorIncome} onChange={e => { const v = e.target.value; setPriorIncome(v); saveSettings({ ...settings }, v, priorWithheld); }}
+                <input type="text" inputMode="decimal" value={priorIncome} onChange={e => { const v = e.target.value; setPriorIncome(v); saveSettings({ ...settings }, v, priorWithheld); }}
                   placeholder="0"
                   style={{ width: '100%', padding: '9px 12px', borderRadius: 8, background: '#1e293b', border: '1px solid #334155', color: '#f1f5f9', fontSize: 13, outline: 'none' }} />
               </div>
               <div style={{ marginBottom: 10 }}>
                 <label style={{ fontSize: 12, color: '#64748b', display: 'block', marginBottom: 5 }}>Tax already withheld ($)</label>
-                <input type="number" value={priorWithheld} onChange={e => { const v = e.target.value; setPriorWithheld(v); saveSettings({ ...settings }, priorIncome, v); }}
+                <input type="text" inputMode="decimal" value={priorWithheld} onChange={e => { const v = e.target.value; setPriorWithheld(v); saveSettings({ ...settings }, priorIncome, v); }}
                   placeholder="0"
                   style={{ width: '100%', padding: '9px 12px', borderRadius: 8, background: '#1e293b', border: '1px solid #334155', color: '#f1f5f9', fontSize: 13, outline: 'none' }} />
               </div>
@@ -1358,9 +1358,10 @@ function TaxCalc({ allData, onClose }) {
             <div style={{ background: '#0f172a', borderRadius: 10, padding: '12px', border: '1px solid #334155' }}>
               <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>Before this app ✏️</div>
               <input
-                type="number"
+                type="text"
+                inputMode="decimal"
                 value={priorIncome}
-                onChange={e => { setPriorIncome(e.target.value); saveSettings({ ...settings }); }}
+                onChange={e => { const v = e.target.value; setPriorIncome(v); saveSettings({ ...settings }, v, priorWithheld); }}
                 placeholder="0"
                 style={{ width: '100%', background: 'transparent', border: 'none', borderBottom: '1px solid #334155', color: '#94a3b8', fontSize: 14, fontWeight: 700, outline: 'none', padding: '2px 0' }}
               />
@@ -1388,8 +1389,8 @@ function TaxCalc({ allData, onClose }) {
               </span>
               {editingGross ? (
                 <input
-                  type="number"
-                  autoFocus
+                  type="text"
+                  inputMode="decimal"
                   value={grossOverride}
                   onChange={e => { const v = e.target.value; setGrossOverride(v); saveSettings({ ...settings }, undefined, undefined, v); }}
                   onBlur={() => setEditingGross(false)}
