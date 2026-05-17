@@ -1823,6 +1823,7 @@ function App() {
 
     // Sum shifts in range
     let gross = 0;
+    let totalWorkedHours = 0; // for uniform/laundry cap
     for (let i = 0; i <= 13; i++) {
       const d = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), rangeStart.getDate() + i);
       const y = d.getFullYear(), mo = d.getMonth(), day = d.getDate();
@@ -1881,10 +1882,11 @@ function App() {
       if (mealAllow && otHrs > 0) shiftPay += mealAllow;
 
       gross += shiftPay;
+      totalWorkedHours += totalHrs;
     }
 
-    // Fortnightly flat allowances
-    if (uniformAllow) gross += uniformAllow;
+    // Uniform/laundry — $/hr rate capped at 80 hrs per fortnight
+    if (uniformAllow) gross += uniformAllow * Math.min(totalWorkedHours, 80);
 
     const fmtD = d => d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
     const periodLabel = `${fmtD(rangeStart)} – ${fmtD(rangeEnd)}`;
@@ -2241,7 +2243,7 @@ function App() {
               { key: 'callbackX',   label: '↩ Call-back multiplier',  suffix: '×',   prefix: '',  placeholder: '1.5',          step: '0.25' },
               { key: 'mealAllow',   label: '🍽 Meal allowance (OT shift)', suffix: '/shift', prefix: '$', placeholder: 'e.g. 18.00', step: '0.01' },
               { key: 'shiftAllow',  label: '📋 Shift flat allowance', suffix: '/shift', prefix: '$', placeholder: 'e.g. 5.00',  step: '0.01' },
-              { key: 'uniformAllow',label: '👕 Uniform/laundry',      suffix: '/fn',  prefix: '$', placeholder: 'e.g. 6.00',  step: '0.01' },
+              { key: 'uniformAllow',label: '👕 Uniform/laundry',      suffix: '/hr ≤80', prefix: '$', placeholder: 'e.g. 0.15',  step: '0.01' },
             ].map(({ key, label, suffix, prefix, placeholder, step }) => (
               <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                 <div style={{ fontSize: 12, color: '#94a3b8', flex: 1 }}>{label}</div>
