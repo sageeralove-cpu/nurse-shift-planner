@@ -494,6 +494,8 @@ function Paywall({ onUnlock }) {
       const data = await res.json();
       if (data.valid) {
         if (data.sync_token) localStorage.setItem('ENJ_SYNC_TOKEN', data.sync_token);
+        // Save the code so we can remind them to keep it somewhere safe
+        localStorage.setItem('ENJ_MY_CODE', clean);
         // Restore all cloud data to localStorage — App will pick it up fresh on mount
         const ud = data.user_data;
         if (ud && typeof ud === 'object') {
@@ -558,15 +560,37 @@ function Paywall({ onUnlock }) {
 
   // ── PIN setup offer (after first unlock) ──────────────────────────────
   if (view === 'pin-setup') {
+    const myCode = localStorage.getItem('ENJ_MY_CODE') || code;
+    const [codeCopied, setCodeCopied] = React.useState(false);
+    function copyCode() {
+      navigator.clipboard?.writeText(myCode).then(() => { setCodeCopied(true); setTimeout(() => setCodeCopied(false), 2000); }).catch(() => {});
+    }
     return (
       <div style={wrapStyle}>
         <div style={{ maxWidth: 360, width: '100%', textAlign: 'center' }}>
           <div style={{ fontSize: 48, marginBottom: 16 }}>🔐</div>
           <div style={{ fontSize: 20, fontWeight: 800, color: '#f1f5f9', marginBottom: 8 }}>Set a Quick-Access PIN?</div>
-          <div style={{ fontSize: 14, color: '#94a3b8', marginBottom: 28, lineHeight: 1.6 }}>
+          <div style={{ fontSize: 14, color: '#94a3b8', marginBottom: 16, lineHeight: 1.6 }}>
             Set a 6-digit PIN so you don't need to enter your Ko-fi code every time.
             {biometricAvailable && ' On iOS, your PIN can be saved to iCloud Keychain and unlocked with Face ID.'}
           </div>
+
+          {/* Code reminder box */}
+          <div style={{ background: '#1e3a5f', border: '1px solid #1e40af', borderRadius: 12, padding: '14px 16px', marginBottom: 20, textAlign: 'left' }}>
+            <div style={{ fontSize: 12, color: '#93c5fd', fontWeight: 700, marginBottom: 6 }}>📋 Save your Ko-fi code somewhere safe</div>
+            <div style={{ fontSize: 11, color: '#7dd3fc', lineHeight: 1.5, marginBottom: 10 }}>
+              You'll need this code to unlock the app on any new browser or device. Nobody remembers these — screenshot it, notes app, email yourself.
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ flex: 1, background: '#0f172a', borderRadius: 8, padding: '10px 12px', fontSize: 16, fontWeight: 800, letterSpacing: 4, color: '#f1f5f9', textAlign: 'center', border: '1px solid #334155' }}>
+                {myCode}
+              </div>
+              <button onClick={copyCode} className="btn" style={{ padding: '10px 14px', background: codeCopied ? '#16a34a' : '#1d4ed8', color: '#fff', fontSize: 12, fontWeight: 700, borderRadius: 8, border: 'none', cursor: 'pointer', flexShrink: 0 }}>
+                {codeCopied ? '✓ Copied' : 'Copy'}
+              </button>
+            </div>
+          </div>
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <button onClick={() => { setPin(''); setView('pin-new'); }} className="btn"
               style={{ padding: '14px', background: '#3b82f6', color: '#fff', fontSize: 15, fontWeight: 700, borderRadius: 12 }}>
@@ -2203,6 +2227,11 @@ function App() {
     try { return JSON.parse(localStorage.getItem(RATES_KEY)) || {}; } catch { return {}; }
   });
   const [dstDismissed, setDstDismissed] = useState(false);
+  const [codeReminderDismissed, setCodeReminderDismissed] = useState(() => localStorage.getItem('ENJ_CODE_REMINDER_DISMISSED') === '1');
+  const [codeCopiedBanner, setCodeCopiedBanner] = useState(false);
+  const myCode = localStorage.getItem('ENJ_MY_CODE');
+  function dismissCodeReminder() { localStorage.setItem('ENJ_CODE_REMINDER_DISMISSED', '1'); setCodeReminderDismissed(true); }
+  function copyCodeBanner() { navigator.clipboard?.writeText(myCode).then(() => { setCodeCopiedBanner(true); setTimeout(() => setCodeCopiedBanner(false), 2000); }).catch(() => {}); }
 
   function saveRates(r) {
     setPayRates(r);
@@ -2487,6 +2516,25 @@ function App() {
             </div>
           </div>
           <button onClick={() => setDstDismissed(true)} style={{ background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>Got it ✓</button>
+        </div>
+      )}
+      {/* Save Your Code Reminder Banner */}
+      {myCode && !codeReminderDismissed && (
+        <div style={{ background: 'linear-gradient(90deg,#1e3a5f,#1e40af)', padding: '10px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
+            <span style={{ fontSize: 20, flexShrink: 0 }}>📋</span>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 13, color: '#fff' }}>Save your Ko-fi code — you'll need it on new devices</div>
+              <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontFamily: 'monospace', fontWeight: 700, letterSpacing: 2, background: 'rgba(0,0,0,0.3)', padding: '2px 8px', borderRadius: 4 }}>{myCode}</span>
+                <button onClick={copyCodeBanner} style={{ background: codeCopiedBanner ? '#16a34a' : 'rgba(255,255,255,0.2)', border: 'none', color: '#fff', borderRadius: 4, padding: '2px 8px', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>
+                  {codeCopiedBanner ? '✓ Copied!' : 'Copy'}
+                </button>
+                <span style={{ color: 'rgba(255,255,255,0.6)' }}>Screenshot or save to Notes</span>
+              </div>
+            </div>
+          </div>
+          <button onClick={dismissCodeReminder} style={{ background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0 }}>Got it ✓</button>
         </div>
       )}
       {/* Header */}
