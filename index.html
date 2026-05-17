@@ -390,6 +390,15 @@ function Paywall({ onUnlock }) {
   const [pinError, setPinError] = useState('');
   const [pendingSyncToken, setPendingSyncToken] = useState('');
   const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const codeInputRef = useRef(null);
+
+  // Focus code input after it mounts (delayed to fix iOS autoFocus bug)
+  useEffect(() => {
+    if (showCode && codeInputRef.current) {
+      const t = setTimeout(() => codeInputRef.current?.focus(), 120);
+      return () => clearTimeout(t);
+    }
+  }, [showCode]);
 
   // Check if WebAuthn / biometric is available
   useEffect(() => {
@@ -627,15 +636,17 @@ function Paywall({ onUnlock }) {
             <form onSubmit={submitCode}>
               <div style={{ marginTop: 8 }}>
                 <input
+                  ref={codeInputRef}
+                  type="text"
                   value={code}
-                  onChange={e => setCode(e.target.value)}
+                  onChange={e => setCode(e.target.value.toUpperCase())}
                   placeholder="ENJ-XXXXXX"
                   autoCapitalize="characters"
                   autoCorrect="off"
+                  autoComplete="off"
                   spellCheck="false"
                   inputMode="text"
                   style={{ width: '100%', padding: '14px 16px', borderRadius: 10, border: error ? '1px solid #ef4444' : '1px solid #475569', background: '#0f172a', color: '#f1f5f9', fontSize: 16, outline: 'none', marginBottom: 10, letterSpacing: 3 }}
-                  autoFocus
                 />
                 {error && <p style={{ color: '#ef4444', fontSize: 13, marginBottom: 10 }}>{error}</p>}
                 <div style={{ display: 'flex', gap: 8 }}>
@@ -2368,7 +2379,15 @@ function App() {
   }, [allData, currentYear, currentMonth, daysInMonth]);
 
   function backup() {
-    const blob = new Blob([JSON.stringify(allData, null, 2)], { type: 'application/json' });
+    const payload = {
+      _version: 2,
+      shifts:      allData,
+      rates:       JSON.parse(localStorage.getItem(RATES_KEY)  || 'null'),
+      lsl:         JSON.parse(localStorage.getItem(LSL_KEY)    || 'null'),
+      leave:       JSON.parse(localStorage.getItem(LEAVE_KEY)  || 'null'),
+      taxSettings: JSON.parse(localStorage.getItem(TAX_KEY)    || 'null'),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -2387,8 +2406,22 @@ function App() {
       reader.onload = ev => {
         try {
           const parsed = JSON.parse(ev.target.result);
-          setAllData(parsed);
-        } catch { alert('Invalid JSON file'); }
+          // Support both v1 (raw shift object) and v2 (full payload)
+          if (parsed._version === 2) {
+            if (parsed.shifts)      { setAllData(parsed.shifts); localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed.shifts)); }
+            if (parsed.rates)       localStorage.setItem(RATES_KEY, JSON.stringify(parsed.rates));
+            if (parsed.lsl)         localStorage.setItem(LSL_KEY,   JSON.stringify(parsed.lsl));
+            if (parsed.leave)       localStorage.setItem(LEAVE_KEY, JSON.stringify(parsed.leave));
+            if (parsed.taxSettings) localStorage.setItem(TAX_KEY,   JSON.stringify(parsed.taxSettings));
+            alert('✅ All data restored — pay rates, leave balances, LSL, and shifts. Refreshing…');
+            setTimeout(() => window.location.reload(), 800);
+          } else {
+            // Legacy v1 — just shift data
+            setAllData(parsed);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+            alert('✅ Shifts restored. Note: pay rates and leave balances were not included in this backup file.');
+          }
+        } catch { alert('Invalid backup file — please use a file exported from this app.'); }
       };
       reader.readAsText(file);
     };
