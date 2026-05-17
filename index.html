@@ -1713,12 +1713,39 @@ function CalCell({ year, month, day, data, isToday, isWeekend, holiday, onOpen, 
     onTooltipHide();
   }
 
+  // Touch: long-press shows tooltip, tap still opens modal
+  const touchStartRef = useRef(null);
+  function handleTouchStart(e) {
+    if (!hasData) return;
+    const touch = e.touches[0];
+    touchStartRef.current = { x: touch.clientX, y: touch.clientY, moved: false };
+    timerRef.current = setTimeout(() => {
+      const rect = ref.current?.getBoundingClientRect();
+      if (rect && !touchStartRef.current?.moved) {
+        onTooltip({ clientX: touch.clientX, clientY: touch.clientY }, d, rect);
+      }
+    }, 500);
+  }
+  function handleTouchMove() {
+    if (touchStartRef.current) touchStartRef.current.moved = true;
+    clearTimeout(timerRef.current);
+    onTooltipHide();
+  }
+  function handleTouchEnd() {
+    clearTimeout(timerRef.current);
+    // Only hide tooltip after a short delay so user can see it
+    setTimeout(() => onTooltipHide(), 1800);
+  }
+
   return (
     <div
       ref={ref}
       onClick={() => onOpen(year, month, day)}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
       style={{
         background: isWeekend ? '#141f30' : '#1e293b',
         border: isToday ? '2px solid #3b82f6' : '1px solid #1e3a5f',
