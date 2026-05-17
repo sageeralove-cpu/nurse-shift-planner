@@ -1,4 +1,5 @@
 // Verify an ENJ-XXXXXX access code — uses native fetch, no npm packages needed
+const crypto = require('crypto');
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
@@ -23,24 +24,34 @@ module.exports = async (req, res) => {
 
     if (!rows || rows.length === 0) return res.status(200).json({ valid: false, error: 'Code not found' });
     const row = rows[0];
-    if (row.used) return res.status(200).json({ valid: false, error: 'Code already used' });
 
-    // Mark as used (single-use enforcement)
-    await fetch(
-      `${SUPABASE_URL}/rest/v1/access_codes?code=eq.${encodeURIComponent(clean)}`,
-      {
-        method: 'PATCH',
-        headers: {
-          apikey: SUPABASE_SERVICE_KEY,
-          Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
-          'Content-Type': 'application/json',
-          Prefer: 'return=minimal'
-        },
-        body: JSON.stringify({ used: true, used_at: new Date().toISOString() })
-      }
-    );
+    // Code is valid — return existing sync_token or generate one if missing.
+    // Codes are reusable across devices (payment already verified via Ko-fi).
+    const sync_token = row.sync_token || crypto.randomUUID();
+    const restored   = !!row.used;
 
-    return res.status(200).json({ valid: true });
+    // Persist sync_token + mark used if not already done
+    if (!row.sync_token || !row.used) {
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/access_codes?code=eq.${encodeURIComponent(clean)}`,
+        {
+          method: 'PATCH',
+          headers: {
+            apikey: SUPABASE_SERVICE_KEY,
+            Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal',
+          },
+          body: JSON.stringify({
+            used: true,
+            used_at: row.used_at || new Date().toISOString(),
+            sync_token,
+          }),
+        }
+      );
+    }
+
+    return res.status(200).json({ valid: true, sync_token, restored });
   } catch (err) {
     console.error('verify-code error:', err);
     return res.status(500).json({ valid: false, error: err.message });
