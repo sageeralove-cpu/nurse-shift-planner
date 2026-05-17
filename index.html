@@ -408,7 +408,13 @@ function Paywall({ onUnlock }) {
   const [pendingSyncToken, setPendingSyncToken] = useState('');
   const [biometricAvailable, setBiometricAvailable] = useState(false);
   const [showNoPinMsg, setShowNoPinMsg] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
   const codeInputRef = useRef(null);
+
+  function copySetupCode() {
+    const myCode = localStorage.getItem('ENJ_MY_CODE') || code;
+    navigator.clipboard?.writeText(myCode).then(() => { setCodeCopied(true); setTimeout(() => setCodeCopied(false), 2000); }).catch(() => {});
+  }
 
 
   // Check if WebAuthn / biometric is available
@@ -561,10 +567,6 @@ function Paywall({ onUnlock }) {
   // ── PIN setup offer (after first unlock) ──────────────────────────────
   if (view === 'pin-setup') {
     const myCode = localStorage.getItem('ENJ_MY_CODE') || code;
-    const [codeCopied, setCodeCopied] = React.useState(false);
-    function copyCode() {
-      navigator.clipboard?.writeText(myCode).then(() => { setCodeCopied(true); setTimeout(() => setCodeCopied(false), 2000); }).catch(() => {});
-    }
     return (
       <div style={wrapStyle}>
         <div style={{ maxWidth: 360, width: '100%', textAlign: 'center' }}>
@@ -585,7 +587,7 @@ function Paywall({ onUnlock }) {
               <div style={{ flex: 1, background: '#0f172a', borderRadius: 8, padding: '10px 12px', fontSize: 16, fontWeight: 800, letterSpacing: 4, color: '#f1f5f9', textAlign: 'center', border: '1px solid #334155' }}>
                 {myCode}
               </div>
-              <button onClick={copyCode} className="btn" style={{ padding: '10px 14px', background: codeCopied ? '#16a34a' : '#1d4ed8', color: '#fff', fontSize: 12, fontWeight: 700, borderRadius: 8, border: 'none', cursor: 'pointer', flexShrink: 0 }}>
+              <button onClick={copySetupCode} className="btn" style={{ padding: '10px 14px', background: codeCopied ? '#16a34a' : '#1d4ed8', color: '#fff', fontSize: 12, fontWeight: 700, borderRadius: 8, border: 'none', cursor: 'pointer', flexShrink: 0 }}>
                 {codeCopied ? '✓ Copied' : 'Copy'}
               </button>
             </div>
